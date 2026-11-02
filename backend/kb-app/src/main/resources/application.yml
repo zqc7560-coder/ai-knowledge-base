@@ -1,0 +1,75 @@
+server:
+  port: 8080
+  tomcat:
+    threads:
+      max: 200
+
+spring:
+  application:
+    name: kb-app
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DB:kb_system}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  servlet:
+    multipart:
+      max-file-size: ${MAX_UPLOAD_MB:20}MB
+      max-request-size: 60MB
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+mybatis-plus:
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  configuration:
+    map-underscore-to-camel-case: true
+
+# AI 密钥安全规范 L4：api-key 只能被 kb-rag.AiClientFactory 消费；
+# 值只从环境变量注入（spring-dotenv 读 backend/.env，已 gitignore）。yml 里绝不出现明文。
+kb:
+  ai:
+    api-key: ${AI_API_KEY}
+    base-url: ${DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    rerank-url: ${DASHSCOPE_RERANK_URL:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}
+    chat-model: ${AI_CHAT_MODEL:qwen-plus}
+    embedding-model: ${AI_EMBEDDING_MODEL:text-embedding-v3}
+    embedding-dim: ${AI_EMBEDDING_DIM:1024}
+    rerank-model: ${AI_RERANK_MODEL:gte-rerank-v2}
+  vector:
+    url: jdbc:postgresql://${PGVECTOR_HOST:localhost}:${PGVECTOR_PORT:5432}/${PGVECTOR_DB:kb_vectors}
+    user: ${PGVECTOR_USER:kb_app}
+    password: ${PGVECTOR_PASSWORD}
+  doc:
+    upload-dir: ${UPLOAD_DIR:./data/uploads}
+    chunk-size: 500
+    chunk-overlap: 100
+
+sa-token:
+  token-name: Authorization
+  timeout: 604800
+  active-timeout: -1
+  is-concurrent: false
+  is-read-cookie: false
+  token-style: uuid
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %level [%thread] %logger{28} - %msg%n%ex"
+  level:
+    com.kb: info
+
+springdoc:
+  api-docs:
+    path: /api/openapi.json
+  swagger-ui:
+    path: /api/docs

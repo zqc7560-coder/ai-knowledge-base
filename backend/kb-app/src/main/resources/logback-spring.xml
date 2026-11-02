@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <!-- 密钥红线 L6：%replace 在编码层把 sk- 形态与 Bearer 形态整体打星，控制台与文件同规则 -->
+  <property name="SAFE_PATTERN"
+    value="%d{yyyy-MM-dd HH:mm:ss.SSS} %level [%thread] %logger{28} [%X{reqId:-}] - %replace(%msg%n%ex){'(?i)(sk-[A-Za-z0-9._-]{8,}|Bearer\s+[A-Za-z0-9._-]{16,})','[MASKED]'}"/>
+
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder><pattern>${SAFE_PATTERN}</pattern></encoder>
+  </appender>
+
+  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>logs/kb-app.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+      <fileNamePattern>logs/kb-app.%d{yyyy-MM-dd}.log</fileNamePattern>
+      <maxHistory>14</maxHistory>
+    </rollingPolicy>
+    <encoder><pattern>${SAFE_PATTERN}</pattern></encoder>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+    <appender-ref ref="FILE"/>
+  </root>
+</configuration>

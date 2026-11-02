@@ -8,10 +8,12 @@ const ROOT = resolve(import.meta.dirname, "..");
 const TARGET = process.argv[2] ? resolve(process.argv[2]) : ROOT;
 // 允许含真实值的本地文件（绝不提交）；扫描 dist 时传第二参数目录即可
 const ALLOW = new Set([join(ROOT, "backend", ".env"), join(ROOT, ".git")]);
-// 注意：字面量用拆分拼接，避免本脚本自匹配自身规则
+// 注意：字面量用拆分拼接，避免本脚本自匹配自身规则。
+// sk- 规则要求 16+ 且必含数字：过滤 CSS 类名等全小写误报（el-splitter__mask-horiz...），
+// 真实密钥（含校验位/数字段）不会漏。
 const PATTERNS = [
-  new RegExp("sk-" + "[A-Za-z0-9]{6,}"),
-  new RegExp("Bearer" + "\\s+[A-Za-z0-9._-]{20,}"),
+  new RegExp("(?=[A-Za-z0-9._-]*[0-9])sk-" + "[A-Za-z0-9._-]{15,}"),
+  new RegExp("Bearer" + "\\s+(?=[A-Za-z0-9._-]*[0-9])[A-Za-z0-9._-]{19,}"),
   new RegExp("MEU" + "CIQ|PRIVATE" + " KEY-----"),
 ];
 const SKIP_EXT = [".png", ".jpg", ".gif", ".ico", ".woff", ".ttf", ".pdf", ".zip", ".jar", ".exe"];
