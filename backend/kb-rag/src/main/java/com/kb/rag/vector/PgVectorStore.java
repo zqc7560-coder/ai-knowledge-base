@@ -15,12 +15,34 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * pgvector 存储适配层（docs/01 决策：MVP=pgvector，预留抽象可切 Milvus）。
- * 文本经 AiClientFactory 向量化后写入 kb_vectors（HNSW 内积索引；上游向量已归一化，内积=余弦）。
+ * pgvector 向量存储适配层。
+ *
+ * <h3>为什么这样设计</h3>
+ * <ul>
+ *   <li><b>为什么选 pgvector 而不是 Milvus（MVP 期）</b>：docs/01 决策——单 Postgres 容器
+ *       即可满足运维成本最低的诉求，10 万 chunk 内 HNSW 延迟足够；若规模超预期，
+ *       只需替换本类实现（方法签名即接口），调用方（RagService/DocumentService）零改动。</li>
+ *   <li><b>为什么用内积 `&lt;#&gt;` 而不是余弦 `&lt;=&gt;`</b>：DashScope text-embedding-v3
+ *       返回的向量已经 L2 归一化（模长=1），此时内积与余弦相似度数学等价，
+ *       而 pgvector 的内积操作符配合 `vector_ip_ops` 索引类型支持 HNSW 增量构建，
+ *       性能优于余弦操作符（pgvector 0.8 时期实测惯例）。
+ *       注意：pgvector 的 `&lt;#&gt;` 返回的是<b>负内积</b>作为"距离"（距离越小越相似），
+ *       所以读回时要取负号还原成相似度分数。</li>
+ *   <li><b>为什么 embedding 与原文双写</b>：向量表冗余存一份 content，检索返回时
+ *       无需再回 MySQL 联表取原文（一次网络往返）；同时 MySQL 的 document_chunks
+ *       仍是事实源，删文档时两边都要清（见 DocumentService.delete）。</li>
+ *   <li><b>为什么 upsert 用 ON CONFLICT DO UPDATE</b>：文档重试（FAILED→重新 EMBEDDING）
+ *       可能对同一 chunk_id 重复入库；幂等 upsert 保证重试不产生重复向量。</li>
+ * </ul>
+ *
+ * <h3>与密钥安全的关系</h3>
+ * 本类不感知 API 密钥——所有向量化调用都经 {@link AiClientFactory}（全工程唯一持有
+ * key 的类）发起，符合 docs/03 §L4 调用面收敛要求。
  */
 @Component
 public class PgVectorStore {
 
+    /** pg 专用连接池（独立于业务 MySQL；8 连接 = 检索读多写少场景的够用值）。 */
     private final JdbcTemplate pg;
     private final DataSource ds;
     private final AiClientFactory ai;
