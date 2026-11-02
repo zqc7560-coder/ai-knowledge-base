@@ -1,0 +1,9 @@
+# 构建上下文=backend/；这些不入镜像（.env 必须挡掉——密钥红线 L2 的镜像层防线）
+.env
+.env.*
+target/
+**/target/
+logs/
+data/
+*.iml
+.idea/

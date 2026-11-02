@@ -115,7 +115,8 @@ public class RagService {
         if (question == null || question.isBlank() || question.length() > 2000)
             throw BizException.of(BizCode.PARAM_INVALID, "问题需 1-2000 字符");
         Conversation conv = convs.loadOwned(me, conversationId);
-        quotaCheck(me);
+        rateCheck(me);    // 分钟闸门：先于一切花钱动作
+        quotaCheck(me);   // 日配额闸门
 
         List<Long> kbIds = ConversationService.split(conv.getKbIds());
         KnowledgeBase firstKb = access.loadExisting(kbIds.get(0));
@@ -217,6 +218,21 @@ public class RagService {
                 cites.stream().map(c -> String.valueOf(c.chunkId())).reduce("", (a, b) -> a.isEmpty() ? b : a + "," + b);
         convs.append(conv.getId(), "assistant", answer, citeIds, null, estTokens(answer), (int) elapsed, ai.chatModel());
         usageBump(me);
+    }
+
+    /**
+     * 限流双闸门（docs/01 §7.7 防滥用省额度）：
+     * ① 分钟级：登录用户 20 问/分钟（Redis INCR+TTL，key 按自然分钟滚动）。
+     *    超了直接抛 1004，不转上游调用——拦截发生在花钱之前才有意义。
+     * ② 日级：300 问/人/天（quotaCheck）。
+     * 计数语义：先 +1 再比较，所以窗口首次请求 n=1；==1 时设过期，避免僵尸键。
+     */
+    private void rateCheck(User me) {
+        String minute = String.valueOf(System.currentTimeMillis() / 60_000);
+        String key = "rl:ask:" + me.getId() + ":" + minute;
+        Long n = redis.opsForValue().increment(key);
+        if (n != null && n == 1) redis.expire(key, java.time.Duration.ofMinutes(2));
+        if (n != null && n > 20) throw BizException.of(BizCode.RATE_LIMITED, "提问过于频繁，请1分钟后再试（20次/分）");
     }
 
     /** Redis 配额：每人每日 300 问。 */

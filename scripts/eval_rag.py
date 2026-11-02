@@ -81,17 +81,35 @@ for i, (q, kw) in enumerate(QA):
         data=json.dumps({"conversationId": conv_id, "question": q}).encode(), method="POST",
         headers={"Content-Type": "application/json", "Authorization": tok, "Accept": "text/event-stream"})
     answer, cites = "", []
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        name = ""
-        for raw in resp:
-            line = raw.decode("utf-8").strip()
-            if line.startswith("event:"): name = line[6:].strip()
-            elif line.startswith("data:") and name:
-                d = line[5:].strip()
-                if name == "delta": answer += d.strip('"')
-                elif name == "citations":
-                    cites = json.loads(d)["citations"]
-                elif name == "done": break
+    # 20问/分钟限流：命中 error 事件且 code=1004 则等窗口滑过重试
+    for attempt in range(3):
+        try:
+            resp_ctx = urllib.request.urlopen(req, timeout=180)
+        except urllib.error.HTTPError as e:
+            resp_ctx = None
+        if resp_ctx is None:
+            time.sleep(61); continue
+        answer, cites = "", []
+        hit_rate = False
+        with resp_ctx as resp:
+            name = ""
+            for raw in resp:
+                line = raw.decode("utf-8").strip()
+                if line.startswith("event:"): name = line[6:].strip()
+                elif line.startswith("data:") and name:
+                    d = line[5:].strip()
+                    if name == "delta": answer += d.strip('"')
+                    elif name == "citations":
+                        cites = json.loads(d)["citations"]
+                    elif name == "error":
+                        j = json.loads(d)
+                        if j.get("code") == 1004: hit_rate = True
+                        else: answer = "ERROR:" + str(j)
+                    elif name == "done":
+                        break
+        if hit_rate:
+            print("  (rate-limited, wait 61s...)"); time.sleep(61); continue
+        break
     snippet_blob = " ".join(c["snippet"] for c in cites[:5])
     r5 = kw in snippet_blob
     ok = kw in answer.replace(" ", " ") or kw in answer
