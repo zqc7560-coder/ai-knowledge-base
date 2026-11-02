@@ -1,0 +1,119 @@
+package com.kb.domain.chat;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.kb.common.api.BizCode;
+import com.kb.common.api.BizException;
+import com.kb.domain.entity.Conversation;
+import com.kb.domain.entity.Message;
+import com.kb.domain.entity.User;
+import com.kb.domain.kb.KbAccessService;
+import com.kb.domain.mapper.ConversationMapper;
+import com.kb.domain.mapper.MessageMapper;
+import org.springframework.stereotype.Service;
+
+import java.util.Arrays;
+import java.util.List;
+
+/** 会话与消息管理（docs/01 F7）：会话绑定多库(kbIds CSV)，消息带引用/用量。 */
+@Service
+public class ConversationService {
+
+    private final ConversationMapper convs;
+    private final MessageMapper msgs;
+    private final KbAccessService access;
+
+    public ConversationService(ConversationMapper convs, MessageMapper msgs, KbAccessService access) {
+        this.convs = convs;
+        this.msgs = msgs;
+        this.access = access;
+    }
+
+    public Conversation create(User me, List<Long> kbIds, String title) {
+        if (kbIds == null || kbIds.isEmpty())
+            throw BizException.of(BizCode.PARAM_INVALID, "请至少选择一个知识库");
+        for (Long id : kbIds) access.require(id, me, KbAccessService.Perm.ASK); // 问答权限才能建会话
+        Conversation c = new Conversation();
+        c.setUserId(me.getId());
+        c.setKbIds(join(kbIds));
+        c.setTitle(title == null || title.isBlank() ? "新对话" : title.trim());
+        c.setPinned(0);
+        c.setDeleted(0);
+        convs.insert(c);
+        return c;
+    }
+
+    public List<Conversation> my(User me) {
+        return convs.selectList(new LambdaQueryWrapper<Conversation>()
+                .eq(Conversation::getUserId, me.getId())
+                .orderByDesc(Conversation::getPinned).orderByDesc(Conversation::getUpdatedAt));
+    }
+
+    public Conversation loadOwned(User me, Long convId) {
+        Conversation c = convs.selectById(convId);
+        if (c == null || !c.getUserId().equals(me.getId()))
+            throw BizException.of(BizCode.NOT_FOUND, "会话不存在");
+        // 会话存续期间库可能被删/撤权：每次问答重新校验 ASK
+        for (Long id : split(c.getKbIds())) access.require(id, me, KbAccessService.Perm.ASK);
+        return c;
+    }
+
+    public List<Message> history(User me, Long convId, int limit) {
+        loadOwned(me, convId);
+        List<Message> list = msgs.selectList(new LambdaQueryWrapper<Message>()
+                .eq(Message::getConversationId, convId).orderByDesc(Message::getId).last("limit " + Math.min(limit, 200)));
+        list = list.stream().sorted((a, b) -> Long.compare(a.getId(), b.getId())).toList();
+        return list;
+    }
+
+    public void rename(User me, Long convId, String title) {
+        Conversation c = convs.selectById(convId);
+        if (c == null || !c.getUserId().equals(me.getId()))
+            throw BizException.of(BizCode.NOT_FOUND, "会话不存在");
+        c.setTitle(title);
+        convs.updateById(c);
+    }
+
+    public void pin(User me, Long convId, boolean pinned) {
+        Conversation c = convs.selectById(convId);
+        if (c == null || !c.getUserId().equals(me.getId()))
+            throw BizException.of(BizCode.NOT_FOUND, "会话不存在");
+        c.setPinned(pinned ? 1 : 0);
+        convs.updateById(c);
+    }
+
+    public void delete(User me, Long convId) {
+        Conversation c = convs.selectById(convId);
+        if (c == null || !c.getUserId().equals(me.getId()))
+            throw BizException.of(BizCode.NOT_FOUND, "会话不存在");
+        msgs.delete(new LambdaQueryWrapper<Message>().eq(Message::getConversationId, convId));
+        convs.deleteById(convId);
+    }
+
+    public Message append(Long convId, String role, String content, String citeChunkIds,
+                          Integer promptTokens, Integer completionTokens, Integer elapsedMs, String model) {
+        Message m = new Message();
+        m.setConversationId(convId);
+        m.setRole(role);
+        m.setContent(content);
+        m.setCiteChunkIds(citeChunkIds);
+        m.setPromptTokens(promptTokens == null ? 0 : promptTokens);
+        m.setCompletionTokens(completionTokens == null ? 0 : completionTokens);
+        m.setElapsedMs(elapsedMs == null ? 0 : elapsedMs);
+        m.setModel(model);
+        msgs.insert(m);
+        // touch updated_at
+        Conversation c = convs.selectById(convId);
+        if (c != null) convs.updateById(c);
+        return m;
+    }
+
+    public static String join(List<Long> ids) {
+        return ids.stream().map(String::valueOf).reduce("", (a, b) -> a.isEmpty() ? b : a + "," + b);
+    }
+
+    public static List<Long> split(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        return Arrays.stream(csv.split(",")).map(String::trim).filter(s -> !s.isEmpty())
+                .map(Long::parseLong).toList();
+    }
+}

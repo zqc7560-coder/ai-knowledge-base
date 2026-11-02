@@ -93,6 +93,58 @@ public class AiClientFactory {
         }
     }
 
+    /**
+     * 流式 chat（OpenAI 协议 stream=true）：每收到一个 delta token 回调 sink；
+     * 返回聚合后的完整文本。上游异常直接抛（调用方发 SSE error 事件）。
+     */
+    @SuppressWarnings("unchecked")
+    public String chatStream(List<Map<String, String>> messages, java.util.function.Consumer<String> sink) {
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("model", chatModel);
+        body.put("messages", messages);
+        body.put("stream", true);
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + "/chat/completions"))
+                    .timeout(Duration.ofSeconds(180))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(toJson(body)))
+                    .build();
+            HttpResponse<java.util.stream.Stream<String>> resp =
+                    http.send(req, HttpResponse.BodyHandlers.ofLines());
+            if (resp.statusCode() >= 400) {
+                log.warn("upstream chat stream status={}", resp.statusCode());
+                throw new AiUpstreamException("AI 服务暂时不可用(" + resp.statusCode() + ")", resp.statusCode() == 429, null);
+            }
+            StringBuilder full = new StringBuilder();
+            resp.body().forEach(line -> {
+                if (!line.startsWith("data:")) return;
+                String payload = line.substring(5).trim();
+                if (payload.equals("[DONE]") || payload.isEmpty()) return;
+                try {
+                    Map<String, Object> chunk = fromJson(payload);
+                    List<Map<String, Object>> choices = (List<Map<String, Object>>) chunk.get("choices");
+                    if (choices == null || choices.isEmpty()) return;
+                    Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
+                    Object c = delta == null ? null : delta.get("content");
+                    if (c != null && !c.toString().isEmpty()) {
+                        full.append(c);
+                        sink.accept(c.toString());
+                    }
+                } catch (Exception ignore) { /* 坏行跳过 */ }
+            });
+            return full.toString();
+        } catch (AiUpstreamException e) {
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AiUpstreamException("AI 调用被中断", false, e);
+        } catch (Exception e) {
+            log.warn("chatStream io-fail {}", e.getClass().getSimpleName());
+            throw new AiUpstreamException("AI 网络异常", false, e);
+        }
+    }
+
     /** 批量向量化：input 列表 -> 每个文本的向量。上游批次上限 10。 */
     public List<float[]> embed(List<String> texts) {
         List<float[]> out = new java.util.ArrayList<>();
