@@ -24,4 +24,10 @@
     private Integer rerankCalls;
 
     private Long totalTokens;
+    private Long promptTokens;
+    private Long completionTokens;
+    private Long embTokens;
+    private Long rerankTokens;
+    private Integer visionCalls;
+    private Long visionTokens;
     }

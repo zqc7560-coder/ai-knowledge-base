@@ -60,7 +60,7 @@ public class OcrService {
             byte[] png = pdfParser.renderPagePng(file, p);
             String text;
             try {
-                text = ai.visionOcr(png, INSTRUCTION);
+                text = ai.visionOcr(png, INSTRUCTION).text();   // token 用量已在工厂内归因(M7.2)
             } catch (Exception e) {
                 throw new ParserException("OCR 第 " + p + " 页识别失败: " + e.getMessage(), e);
             }

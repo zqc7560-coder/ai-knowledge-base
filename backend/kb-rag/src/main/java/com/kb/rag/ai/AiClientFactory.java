@@ -70,6 +70,10 @@ public class AiClientFactory {
     /** key 尾4位仅允许出现在 admin 配置页（L5）。 */
     public String maskedKey() { return mask(apiKey); }
 
+    private volatile com.kb.rag.usage.UsageRecorder usageRecorder;
+    /** setter 晚绑定：工厂被各服务构造注入，UsageRecorder 若反向构造注入会成环。 */
+    public void setUsageRecorder(com.kb.rag.usage.UsageRecorder r) { this.usageRecorder = r; }
+
     public String chatModel() { return chatModel; }
     public String embeddingModel() { return embeddingModel; }
     public int embeddingDim() { return embeddingDim; }
@@ -99,6 +103,7 @@ public class AiClientFactory {
             List<Map<String, Object>> choices = (List<Map<String, Object>>) parsed.get("choices");
             if (choices == null || choices.isEmpty()) throw new IllegalStateException("empty choices");
             Map<String, Object> msg = (Map<String, Object>) choices.get(0).get("message");
+            recordUsage("chat", parsed);
             return String.valueOf(msg.get("content"));
         } catch (AiUpstreamException e) {
             throw e;
@@ -106,6 +111,34 @@ public class AiClientFactory {
             log.warn("chat call failed reqId={} err={}", com.kb.common.api.RequestIds.current(), e.getClass().getSimpleName());
             throw new AiUpstreamException("AI 服务暂时不可用", e);
         }
+    }
+
+    /** M7.2：从 OpenAI 兼容响应解析 usage 并记到 UsageRecorder（按当前 UsageContext 归因）。 */
+    @SuppressWarnings("unchecked")
+    private void recordUsage(String kind, Map<String, Object> parsed) {
+        if (usageRecorder == null) return;
+        try {
+            Map<String, Object> u = (Map<String, Object>) parsed.get("usage");
+            if (u == null) return;
+            long pt = num(u.get("prompt_tokens")), ct = num(u.get("completion_tokens")), tt = num(u.get("total_tokens"));
+            var ctx = com.kb.rag.usage.UsageContext.get();
+            Long uid = ctx == null ? null : ctx.userId;
+            Long kb  = ctx == null ? null : ctx.kbId;
+            switch (kind) {
+                case "chat"   -> usageRecorder.chat(uid == null ? 0L : uid, pt, ct);
+                case "emb"    -> usageRecorder.embedding(kb == null ? 0L : kb, tt > 0 ? tt : pt);
+                case "rerank" -> usageRecorder.rerank(uid == null ? 0L : uid, tt > 0 ? tt : pt);
+            }
+        } catch (Exception ignore) { /* 归因失败不影响业务 */ }
+    }
+    private static long num(Object o) { return o instanceof Number n ? n.longValue() : 0L; }
+
+    /** 流式响应里 usage 若上游给（DashScope 兼容层最后一 chunk 带 usage，OpenAI 需 stream_options）；
+     *  拿不到时以聚合字符数保守估算 prompt 侧为 0——口径在 docs/06 写明，不虚构精确值。 */
+    @SuppressWarnings("unchecked")
+    private void recordStreamUsage(Map<String, Object> chunk) {
+        Map<String, Object> u = (Map<String, Object>) chunk.get("usage");
+        if (u != null && num(u.get("total_tokens")) > 0) recordUsage("chat", chunk);
     }
 
     /**
@@ -138,6 +171,7 @@ public class AiClientFactory {
                 if (payload.equals("[DONE]") || payload.isEmpty()) return;
                 try {
                     Map<String, Object> chunk = fromJson(payload);
+                    if (chunk.get("usage") != null) { recordUsage("chat", chunk); }
                     List<Map<String, Object>> choices = (List<Map<String, Object>>) chunk.get("choices");
                     if (choices == null || choices.isEmpty()) return;
                     Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
@@ -184,6 +218,7 @@ public class AiClientFactory {
                 List<Map<String, Object>> data = (List<Map<String, Object>>) parsed.get("data");
                 List<float[]> vecs = new java.util.ArrayList<>();
                 for (Map<String, Object> d : data) vecs.add(toFloatArray((List<Number>) d.get("embedding")));
+                recordUsage("emb", parsed);
                 return vecs;
             } catch (AiUpstreamException e) {
                 if (e.busy() && attempt < 3) { sleepBackoff(attempt); continue; }
@@ -210,6 +245,7 @@ public class AiClientFactory {
                     ((Number) r.get("relevance_score")).doubleValue()));
         }
         items.sort((a, b) -> Double.compare(b.score(), a.score()));
+        recordUsage("rerank", parsed);
         return items;
     }
 
@@ -227,7 +263,7 @@ public class AiClientFactory {
      *
      * 密钥安全：同其它方法，Bearer 仅在 post() 内拼接，报文不回显（L4/L6）。
      */
-    public String visionOcr(byte[] imageBytes, String instruction) {
+    public VisionResult visionOcr(byte[] imageBytes, String instruction) {
         String dataUrl = "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(imageBytes);
         java.util.List<Map<String, Object>> content = java.util.List.of(
                 Map.of("type", "image_url", "image_url", Map.of("url", dataUrl)),
@@ -241,8 +277,16 @@ public class AiClientFactory {
         List<Map<String, Object>> choices = (List<Map<String, Object>>) parsed.get("choices");
         if (choices == null || choices.isEmpty()) throw new AiUpstreamException("OCR 返回空", false, null);
         Map<String, Object> msg = (Map<String, Object>) choices.get(0).get("message");
-        return String.valueOf(msg.get("content"));
+        long tt = 0;
+        if (parsed.get("usage") instanceof Map<?, ?> uu) tt = num(uu.get("total_tokens"));
+        var ctx = com.kb.rag.usage.UsageContext.get();
+        if (usageRecorder != null && ctx != null && ctx.kbId != null)
+            usageRecorder.vision(ctx.kbId, tt);
+        return new VisionResult(String.valueOf(msg.get("content")), tt);
     }
+
+    /** OCR 单页结果：文本 + 本次调用 token（M7.2 成本口径）。 */
+    public record VisionResult(String text, long totalTokens) {}
 
     // ---------- infra ----------
 

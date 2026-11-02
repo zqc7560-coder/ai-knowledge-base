@@ -2,6 +2,7 @@ package com.kb.document.web;
 
 import com.kb.common.api.Result;
 import com.kb.document.service.ReindexService;
+import com.kb.domain.entity.KnowledgeBase;
 import com.kb.domain.kb.KbAccessService;
 import com.kb.security.auth.AuthService;
 import org.springframework.web.bind.annotation.*;
@@ -28,15 +29,19 @@ public class ReindexController {
 
     @PostMapping("/{kbId}/reindex")
     public Result<Void> reindex(@PathVariable Long kbId) {
-        access.require(kbId, auth.currentUser(), KbAccessService.Perm.EDIT);
-        reindex.reindex(kbId);
+        var me = auth.currentUser();
+        access.require(kbId, me, KbAccessService.Perm.EDIT);
+        KnowledgeBase kb = access.loadExisting(kbId);
+        reindex.reindex(kbId, me.getId(), kb.getName());
         return Result.ok(null);
     }
 
     @PostMapping("/{kbId}/migrate")
     public Result<Void> migrate(@PathVariable Long kbId, @RequestParam String to) {
-        access.require(kbId, auth.currentUser(), KbAccessService.Perm.EDIT);
-        reindex.migrate(kbId, to);
+        var me = auth.currentUser();
+        access.require(kbId, me, KbAccessService.Perm.EDIT);
+        KnowledgeBase kb = access.loadExisting(kbId);
+        reindex.migrate(kbId, to, me.getId(), kb.getName());
         return Result.ok(null);
     }
 

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kb.common.api.BizCode;
 import com.kb.common.api.BizException;
 import com.kb.domain.entity.Document;
+import com.kb.domain.entity.KnowledgeBase;
 import com.kb.domain.entity.DocumentChunk;
 import com.kb.domain.mapper.DocumentChunkMapper;
 import com.kb.domain.mapper.DocumentMapper;
@@ -52,6 +53,8 @@ public class ReindexService {
         public final AtomicInteger chunks = new AtomicInteger();
         public final java.util.concurrent.atomic.AtomicReference<String> state =
                 new java.util.concurrent.atomic.AtomicReference<>("RUNNING");
+        Long rowId;                     // process_tasks.id（M7.1 持久化）
+        volatile long lastFlush;        // 进度节流写库（≥2s 或终态才 update，避免每单位一次 UPDATE）
         TaskInfo(String type, String target, int unitTotal) {
             this.type = type; this.target = target; this.unitTotal = unitTotal;
         }
@@ -61,25 +64,29 @@ public class ReindexService {
     private final DocumentChunkMapper chunks;
     private final DocumentService docPipeline;
     private final com.kb.rag.vector.VectorStoreRouter router;
+    private final com.kb.domain.mapper.ProcessTaskMapper taskLog;
 
     private final Map<Long, TaskInfo> tasks = new ConcurrentHashMap<>();
 
     public ReindexService(DocumentMapper docs, DocumentChunkMapper chunks,
-                          DocumentService docPipeline, com.kb.rag.vector.VectorStoreRouter router) {
+                          DocumentService docPipeline, com.kb.rag.vector.VectorStoreRouter router,
+                          com.kb.domain.mapper.ProcessTaskMapper taskLog) {
         this.docs = docs;
         this.chunks = chunks;
         this.docPipeline = docPipeline;
         this.router = router;
+        this.taskLog = taskLog;
     }
 
     /** 当前生效的向量存储（切换配置后自动变）。 */
     private VectorStore active() { return router.active(); }
 
-    public void reindex(Long kbId) {
+    public void reindex(Long kbId, Long userId, String kbName) {
         guard(kbId);
         List<Document> list = docs.selectList(new LambdaQueryWrapper<Document>()
                 .eq(Document::getKbId, kbId));
         TaskInfo t = new TaskInfo("reindex", active().name(), list.size());
+        t.rowId = openRow(t, kbId, kbName, userId);   // M7.1：任务先落库再起跑
         tasks.put(kbId, t);
         VectorStore vs = active();
         new Thread(() -> {
@@ -87,18 +94,18 @@ public class ReindexService {
                 vs.deleteByKbIds(List.of(kbId));
                 for (Document d : list) {
                     docPipeline.reprocess(d.getId());   // 同步重跑：解析→按库新参数切片→向量
-                    t.unitDone.incrementAndGet();
+                    t.unitDone.incrementAndGet(); flush(t);
                 }
                 t.state.set("DONE");
             } catch (Exception e) {
                 t.state.set("FAILED: " + e.getMessage());
                 log.warn("reindex kb {} failed", kbId, e);
-            } finally { tasksRunning.remove(kbId); }
+            } finally { tasksRunning.remove(kbId); flushFinal(t); }
         }, "reindex-" + kbId).start();
     }
 
     /** 迁移演练：把库内全部 chunk 重嵌入进目标存储，成功后清当前存储该库数据。 */
-    public void migrate(Long kbId, String toStore) {
+    public void migrate(Long kbId, String toStore, Long userId, String kbName) {
         VectorStore from = active();
         VectorStore to = router.byName(toStore);
         if (to == null) throw BizException.of(BizCode.PARAM_INVALID, "未知目标存储: " + toStore);
@@ -108,6 +115,7 @@ public class ReindexService {
         List<DocumentChunk> all = chunks.selectList(new LambdaQueryWrapper<DocumentChunk>()
                 .eq(DocumentChunk::getKbId, kbId).orderByAsc(DocumentChunk::getId));
         TaskInfo t = new TaskInfo("migrate", from.name() + "->" + to.name(), all.size());
+        t.rowId = openRow(t, kbId, kbName, userId);
         tasks.put(kbId, t);
         VectorStore src = from, dst = to;
         new Thread(() -> {
@@ -117,14 +125,14 @@ public class ReindexService {
                     var batch = all.subList(i, Math.min(i + 10, all.size()));
                     dst.upsert(batch.stream().map(c -> new VectorStore.ChunkRow(
                             c.getId(), c.getKbId(), c.getDocId(), c.getContent())).toList());
-                    t.unitDone.addAndGet(batch.size());
+                    t.unitDone.addAndGet(batch.size()); flush(t);
                 }
                 src.deleteByKbIds(List.of(kbId));
                 t.state.set("DONE");
             } catch (Exception e) {
                 t.state.set("FAILED: " + e.getMessage());
                 log.warn("migrate kb {} failed", kbId, e);
-            } finally { tasksRunning.remove(kbId); }
+            } finally { tasksRunning.remove(kbId); flushFinal(t); }
         }, "migrate-" + kbId).start();
     }
 
@@ -132,11 +140,56 @@ public class ReindexService {
         TaskInfo t = tasks.get(kbId);
         java.util.LinkedHashMap<String, Object> m = new java.util.LinkedHashMap<>();
         m.put("store", active().name());
-        if (t == null) { m.put("task", null); return m; }
+        if (t == null) {
+            // 重启后内存没了，但前端仍在轮询本库状态——回源 DB 最近一条（M7.1）
+            var last = taskLog.selectList(new LambdaQueryWrapper<com.kb.domain.entity.ProcessTask>()
+                    .eq(com.kb.domain.entity.ProcessTask::getKbId, kbId)
+                    .orderByDesc(com.kb.domain.entity.ProcessTask::getId).last("LIMIT 1"));
+            if (!last.isEmpty()) {
+                var r = last.get(0);
+                m.put("task", Map.of("type", r.getType(), "target", r.getTarget(),
+                        "unitTotal", r.getUnitTotal(), "unitDone", r.getUnitDone(),
+                        "chunks", 0, "state", r.getState()));
+                return m;
+            }
+            m.put("task", null); return m;
+        }
         m.put("task", Map.of("type", t.type, "target", t.target,
                 "unitTotal", t.unitTotal, "unitDone", t.unitDone.get(),
                 "chunks", t.chunks.get(), "state", t.state.get()));
         return m;
+    }
+
+    /** 任务历史（管理页，最近 50 条）。 */
+    public List<com.kb.domain.entity.ProcessTask> history() {
+        return taskLog.selectList(new LambdaQueryWrapper<com.kb.domain.entity.ProcessTask>()
+                .orderByDesc(com.kb.domain.entity.ProcessTask::getId).last("LIMIT 50"));
+    }
+
+    /** 任务落库：立即 insert 得 rowId。 */
+    private Long openRow(TaskInfo t, Long kbId, String kbName, Long userId) {
+        var r = new com.kb.domain.entity.ProcessTask();
+        r.setType(t.type); r.setKbId(kbId); r.setKbName(kbName); r.setTarget(t.target);
+        r.setUnitTotal(t.unitTotal); r.setUnitDone(0); r.setState("RUNNING"); r.setCreatedBy(userId);
+        taskLog.insert(r);
+        return r.getId();
+    }
+    /** 进度节流写库：距上次 ≥2 秒才 update（任务循环里高频调用，不能每步都打 DB）。 */
+    private void flush(TaskInfo t) {
+        if (t.rowId == null) return;
+        long now = System.currentTimeMillis();
+        if (now - t.lastFlush < 2000) return;
+        t.lastFlush = now;
+        var r = new com.kb.domain.entity.ProcessTask();
+        r.setId(t.rowId); r.setUnitDone(t.unitDone.get());
+        taskLog.updateById(r);
+    }
+    /** 终态强制写库（不受节流限制）。 */
+    private void flushFinal(TaskInfo t) {
+        if (t.rowId == null) return;
+        var r = new com.kb.domain.entity.ProcessTask();
+        r.setId(t.rowId); r.setUnitDone(t.unitDone.get()); r.setState(t.state.get());
+        taskLog.updateById(r);
     }
 
     private final java.util.Set<Long> tasksRunning = java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());

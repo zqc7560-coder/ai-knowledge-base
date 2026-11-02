@@ -96,6 +96,9 @@ public class ChatController {
         SseEmitter emitter = new SseEmitter(180_000L);
         var me = auth.currentUser(); // 请求线程内取会话上下文
         ssePool.submit(() -> {
+            // M7.2 归因：ssePool 线程无登录上下文，显式把 userId 绑进 UsageContext
+            // （ask 全流程——改写 chat/生成 chatStream/rerank——都在此线程执行）
+            com.kb.rag.usage.UsageContext.set(me.getId(), null);
             try {
                 RagService.AskResult res = rag.ask(me, req.conversationId(), req.question(),
                         d -> sendQuiet(emitter, "delta", d));
@@ -112,6 +115,8 @@ public class ChatController {
                 log.warn("ask failed reqId={}", com.kb.common.api.RequestIds.current(), e);
                 sendQuiet(emitter, "error", Map.of("code", 1003, "message", "服务内部错误"));
                 emitter.complete();
+            } finally {
+                com.kb.rag.usage.UsageContext.clear();   // 池线程复用，必清（防串用户归因）
             }
         });
         emitter.onCompletion(() -> {});

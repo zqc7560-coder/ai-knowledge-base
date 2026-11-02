@@ -127,6 +127,8 @@ public class DocumentService {
     void process(Long docId) {
         Document d = docs.selectById(docId);
         if (d == null) return;
+        // M7.2 归因：管道线程无登录态，按 kbId 让 UsageRecorder 查库主记账
+        com.kb.rag.usage.UsageContext.set(null, d.getKbId());
         try {
             moveTo(d, DocStatus.PARSING, null);
             DocumentParser parser = parsers.get(d.getFileType());
@@ -178,6 +180,8 @@ public class DocumentService {
             if (reason.length() > 480) reason = reason.substring(0, 480);
             moveTo(d, DocStatus.FAILED, reason);
             log.warn("doc {} FAILED: {}", docId, reason);
+        } finally {
+            com.kb.rag.usage.UsageContext.clear();   // 池线程复用，必清
         }
     }
 
@@ -197,6 +201,26 @@ public class DocumentService {
         d.setTokens(0);
         docs.updateById(d);
         process(docId);
+    }
+
+    /**
+     * 启动恢复（M7.1）：进程被杀/重启时，正在 PARSING/CHUNKED/EMBEDDING 的文档会永远卡住。
+     * 这里把它们复位 UPLOADED 重新排队——reprocess 的幂等逻辑（清旧 chunk 再重跑）直接复用。
+     * @return 恢复排队的文档数
+     */
+    public int recoverStuck() {
+        java.util.List<Document> stuck = docs.selectList(new LambdaQueryWrapper<Document>()
+                .in(Document::getStatus, DocStatus.PARSING.name(), DocStatus.CHUNKED.name(), DocStatus.EMBEDDING.name()));
+        for (Document d : stuck) {
+            chunks.delete(new LambdaQueryWrapper<DocumentChunk>().eq(DocumentChunk::getDocId, d.getId()));
+            vectorStore.deleteByDocIds(java.util.List.of(d.getId()));
+            d.setStatus(DocStatus.UPLOADED.name());
+            d.setChunkCount(0); d.setTokens(0);
+            docs.updateById(d);
+            final Long id = d.getId();
+            pool.submit(() -> process(id));
+        }
+        return stuck.size();
     }
 
     public void retry(User me, Long docId) {

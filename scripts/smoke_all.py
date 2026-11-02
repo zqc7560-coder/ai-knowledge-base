@@ -173,6 +173,16 @@ step("M6 reindex DONE", state == "DONE", str(s.get("task"))[:60])
 ans4, _, _ = ask("XG-200 默认 IP 是多少")
 step("M6 QA after reindex", "192.168.8.100" in ans4, f"ans={ans4[:40]}")
 
+# ---------- M7 任务持久化 / 用量落库 ----------
+tk_hist = js("/admin/tasks", token=atok)          # atok: 管理登录在 F8 段已取
+rows = tk_hist.get("data") or []
+step("M7.1 tasks history persisted", tk_hist.get("code") == 0 and len(rows) >= 1, f"rows={len(rows)}")
+mm = js("/admin/usage-month", token=atok)
+mdata = mm.get("data") or {}
+step("M7.2 usage-month tokens>0", mm.get("code") == 0 and (mdata.get("totalTokens") or 0) > 0,
+     f"tokens={mdata.get('totalTokens')} cost={mdata.get('totalCostYuan')}")
+step("M7.2 cost>0", float(mdata.get("totalCostYuan") or 0) > 0)
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

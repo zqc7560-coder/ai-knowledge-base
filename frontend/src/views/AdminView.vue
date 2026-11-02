@@ -46,6 +46,21 @@
     </el-card>
 
     <el-card shadow="never" style="margin-top: 14px">
+      <template #header>任务历史（重建索引/向量迁移，最近50条 · 重启不丢 M7.1）</template>
+      <el-table :data="tasks" size="small" empty-text="暂无任务">
+        <el-table-column prop="id" label="#" width="50" />
+        <el-table-column prop="type" label="类型" width="80" />
+        <el-table-column prop="kbName" label="知识库" min-width="140" />
+        <el-table-column prop="target" label="目标" width="150" />
+        <el-table-column label="进度" width="90">
+          <template #default="{ row }">{{ row.unitDone }}/{{ row.unitTotal }}</template>
+        </el-table-column>
+        <el-table-column prop="state" label="状态" min-width="140" />
+        <el-table-column prop="updatedAt" label="更新" width="160" />
+      </el-table>
+    </el-card>
+
+    <el-card shadow="never" style="margin-top: 14px">
       <template #header>点踩答案（检索质量 badcase，可据此补库）</template>
       <el-table :data="disliked" size="small" empty-text="暂无点踩">
         <el-table-column prop="conversationId" label="会话" width="70" />
@@ -57,10 +72,23 @@
     </el-card>
 
     <el-card shadow="never" style="margin-top: 14px">
-      <template #header>今日 AI 用量（按用户问答次数，Redis 实时计数）</template>
-      <el-table :data="usageRows" size="small" empty-text="今日暂无用量">
+      <template #header>
+        本月 AI 用量与估算成本（token 落库口径 M7.2，单价为牌价近似）
+        <el-button size="small" style="float: right" @click="loadAll">刷新</el-button>
+      </template>
+      <div v-if="monthStat" class="hint" style="margin-bottom: 8px">
+        {{ monthStat.period }}　总 token {{ monthStat.totalTokens }}　估算成本 ¥{{ monthStat.totalCostYuan }}
+      </div>
+      <el-table :data="monthRows" size="small" empty-text="本月暂无用量">
         <el-table-column prop="user" label="用户" min-width="120" />
-        <el-table-column prop="asks" label="问答次数" width="120" />
+        <el-table-column prop="chatCalls" label="问答次数" width="90" />
+        <el-table-column prop="embCalls" label="嵌入批次" width="90" />
+        <el-table-column prop="rerankCalls" label="重排次数" width="90" />
+        <el-table-column prop="visionCalls" label="OCR页数" width="90" />
+        <el-table-column prop="tokens" label="总 token" width="110" />
+        <el-table-column label="估算成本(¥)" width="110">
+          <template #default="{ row }">{{ Number(row.costYuan).toFixed(4) }}</template>
+        </el-table-column>
       </el-table>
     </el-card>
   </div>
@@ -78,7 +106,10 @@ const isAdmin = computed(() => store.me?.role === "ADMIN");
 const stats = ref<any>({ docsByStatus: [] });
 const users = ref<any[]>([]);
 const usageRows = ref<{ user: string; asks: number }[]>([]);
+const monthRows = ref<any[]>([]);
+const monthStat = ref<any>(null);
 const disliked = ref<any[]>([]);
+const tasks = ref<any[]>([]);
 
 const cards = computed(() => [
   { label: "用户", value: stats.value.users ?? "-" },
@@ -99,6 +130,9 @@ async function loadAll() {
     user: userName((k.match(/u(\d+):/) || [])[1]), asks: Number(v),
   }));
   disliked.value = (await http.get("/admin/messages/disliked")) as any[];
+  tasks.value = (await http.get("/admin/tasks")) as any[];
+  const mm = (await http.get("/admin/usage-month")) as any;
+  monthRows.value = mm.rows || []; monthStat.value = mm;
 }
 function userName(id: string) {
   const u = users.value.find(x => String(x.id) === id);
