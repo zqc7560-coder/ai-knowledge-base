@@ -48,6 +48,13 @@ public class ConversationService {
                 .orderByDesc(Conversation::getPinned).orderByDesc(Conversation::getUpdatedAt));
     }
 
+    /** 仅按 id 取会话（分享公开视图用：凭证=token 已证明授权，不再叠加用户校验）。不存在抛 1002。 */
+    public Conversation loadExisting(Long convId) {
+        Conversation c = convs.selectById(convId);
+        if (c == null) throw BizException.of(BizCode.NOT_FOUND, "会话不存在");
+        return c;
+    }
+
     public Conversation loadOwned(User me, Long convId) {
         Conversation c = convs.selectById(convId);
         if (c == null || !c.getUserId().equals(me.getId()))

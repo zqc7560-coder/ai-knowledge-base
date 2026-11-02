@@ -4,6 +4,10 @@
       <el-button text @click="$router.push('/')">← 返回</el-button>
       <h2>{{ kbName }}</h2>
       <el-tag v-if="kb" size="small">{{ visLabel }}</el-tag>
+      <span style="flex:1"></span>
+      <el-button size="small" :disabled="reindexing" :loading="reindexing" @click="doReindex">
+        {{ reindexing ? '重建中 ' + reTask : '重建索引' }}
+      </el-button>
     </div>
 
     <el-upload drag :auto-upload="false" :show-file-list="false" accept=".pdf,.docx,.txt,.md,.markdown"
@@ -45,7 +49,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from "vue";
 import { useRoute } from "vue-router";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { UploadFilled } from "@element-plus/icons-vue";
 import { http } from "../api/http";
 
@@ -69,6 +73,33 @@ let timer: number | undefined;
 const fmtSize = (n: number) => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : (n / 1024).toFixed(0) + " KB";
 const statusType = (s: string) =>
   (s === "READY" ? "success" : s === "FAILED" ? "danger" : s === "UPLOADED" ? "info" : "warning") as never;
+
+const reindexing = ref(false);
+const reTask = ref("");
+async function doReindex() {
+  try {
+    await ElMessageBox.confirm(
+      "重建索引会清空本库向量并按知识库当前切片参数重新解析、切片、向量化全部文档。修改了切片设置后点这里生效。",
+      "重建索引", { confirmButtonText: "开始重建", type: "warning" });
+  } catch { return; }
+  await http.post(`/kb/${kbId}/reindex`);
+  reindexing.value = true;
+  pollReindex();
+}
+function pollReindex() {
+  const t = window.setInterval(async () => {
+    const s = (await http.get(`/kb/${kbId}/reindex-status`)) as any;
+    const task = s.task;
+    reTask.value = task ? `${task.unitDone}/${task.unitTotal}` : "";
+    if (!task || task.state === "DONE" || String(task.state).startsWith("FAILED")) {
+      clearInterval(t);
+      reindexing.value = false;
+      if (task && String(task.state).startsWith("FAILED")) ElMessage.error("重建失败: " + task.state);
+      else if (task) ElMessage.success("重建完成");
+      reload();
+    }
+  }, 3000);
+}
 
 async function reload() {
   loading.value = true;

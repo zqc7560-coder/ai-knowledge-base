@@ -17,7 +17,7 @@ import com.kb.domain.mapper.KnowledgeBaseMapper;
 import com.kb.rag.ai.AiClientFactory;
 import com.kb.rag.ai.AiUpstreamException;
 import com.kb.rag.prompt.RagPrompts;
-import com.kb.rag.vector.PgVectorStore;
+import com.kb.rag.vector.VectorStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -72,7 +72,7 @@ public class RagService {
     public record AskResult(String answer, List<RagPrompts.Cited> citations, long elapsedMs) {}
 
     private final AiClientFactory ai;
-    private final PgVectorStore vectors;
+    private final VectorStore vectors;
     private final ConversationService convs;
     private final KbAccessService access;
     private final KnowledgeBaseMapper kbMapper;
@@ -92,7 +92,7 @@ public class RagService {
     @org.springframework.beans.factory.annotation.Value("${kb.rag.rerank:true}")
     private boolean rerankEnabled;
 
-    public RagService(AiClientFactory ai, PgVectorStore vectors, ConversationService convs,
+    public RagService(AiClientFactory ai, VectorStore vectors, ConversationService convs,
                       KbAccessService access, KnowledgeBaseMapper kbMapper, DocumentMapper docMapper,
                       DocumentChunkMapper chunkMapper, com.kb.domain.mapper.MessageMapper msgMapper,
                       DataSource dataSource,
@@ -130,8 +130,8 @@ public class RagService {
         //    向量擅长语义近似但会漏"型号/专有名词"这类精确 token；全文正好互补。
         //    放大 4 倍（上限20）召回是给下一步 cross-encoder 精排留候选池——初筛宽、精筛严。
         int wideK = Math.min(topK * 4, 20);
-        List<PgVectorStore.Scored> vecHits = vectors.search(searchQuery, kbIds, wideK, 0.0);
-        List<PgVectorStore.Scored> recall;
+        List<VectorStore.Hit> vecHits = vectors.search(searchQuery, kbIds, wideK, 0.0);
+        List<VectorStore.Hit> recall;
         if (hybridEnabled) {
             List<DocumentChunk> kwHits = keywordRecall(searchQuery, kbIds, wideK);
             recall = fuseChannels(vecHits, kwHits, wideK);
@@ -148,18 +148,18 @@ public class RagService {
         // 3. rerank 精排（gte-rerank-v2 对候选重新打分取 topK）
         //    失败降级用召回分数排序——可用性优先于精度；
         //    消融开关 kb.rag.rerank=false 直接跳过精排，便于 A/B 对比精排贡献。
-        List<PgVectorStore.Scored> ranked;
+        List<VectorStore.Hit> ranked;
         if (!rerankEnabled) {
             ranked = new ArrayList<>(recall.subList(0, Math.min(topK, recall.size())));
         } else try {
-            List<String> docs = recall.stream().map(PgVectorStore.Scored::content).toList();
+            List<String> docs = recall.stream().map(VectorStore.Hit::content).toList();
             List<AiClientFactory.RerankItem> rr = ai.rerank(searchQuery, docs, topK);
             ranked = new ArrayList<>();
             for (var item : rr) if (item.score() >= threshold) ranked.add(recall.get(item.index()));
             if (ranked.isEmpty()) ranked = recall.subList(0, Math.min(topK, recall.size()));
         } catch (Exception e) {
             log.warn("rerank degraded: {}", e.getClass().getSimpleName());
-            ranked = recall.stream().sorted(Comparator.comparingDouble((PgVectorStore.Scored s) -> s.score()).reversed())
+            ranked = recall.stream().sorted(Comparator.comparingDouble((VectorStore.Hit s) -> s.score()).reversed())
                     .limit(topK).toList();
         }
 
@@ -278,23 +278,23 @@ public class RagService {
      * 融合两通道结果：向量通道保 content/docId 映射，全文通道贡献名次。
      * RRF 分数作为合成 score 向下传给 rerank 层（rerank 失败降级时用它排序）。
      */
-    List<PgVectorStore.Scored> fuseChannels(List<PgVectorStore.Scored> vecHits,
+    List<VectorStore.Hit> fuseChannels(List<VectorStore.Hit> vecHits,
                                             List<DocumentChunk> kwHits, int limit) {
-        Map<Long, PgVectorStore.Scored> byChunk = new LinkedHashMap<>();
+        Map<Long, VectorStore.Hit> byChunk = new LinkedHashMap<>();
         for (var v : vecHits) byChunk.put(v.chunkId(), v);
         // 全文通道里向量没召回的块，从 MySQL 取原文补进候选池（content 非空才能进 prompt）
         List<DocumentChunk> extras = kwHits.stream().filter(k -> !byChunk.containsKey(k.getId())).toList();
         for (var e : extras) byChunk.put(e.getId(),
-                new PgVectorStore.Scored(e.getId(), e.getDocId(), e.getKbId(), e.getContent(), 0.0));
+                new VectorStore.Hit(e.getId(), e.getDocId(), e.getKbId(), e.getContent(), 0.0));
         if (extras.isEmpty() || kwHits.isEmpty()) return vecHits;
 
-        List<Long> vecOrder = vecHits.stream().map(PgVectorStore.Scored::chunkId).toList();
+        List<Long> vecOrder = vecHits.stream().map(VectorStore.Hit::chunkId).toList();
         List<Long> kwOrder = kwHits.stream().map(DocumentChunk::getId).toList();
         List<RrfFusion.Fused> fused = RrfFusion.fuse(List.of(vecOrder, kwOrder), limit);
-        List<PgVectorStore.Scored> out = new ArrayList<>();
+        List<VectorStore.Hit> out = new ArrayList<>();
         for (var f : fused) {
             var s = byChunk.get(f.chunkId());
-            if (s != null) out.add(new PgVectorStore.Scored(s.chunkId(), s.docId(), s.kbId(), s.content(), f.score()));
+            if (s != null) out.add(new VectorStore.Hit(s.chunkId(), s.docId(), s.kbId(), s.content(), f.score()));
         }
         return out;
     }

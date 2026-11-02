@@ -16,7 +16,7 @@ import com.kb.domain.kb.KbAccessService;
 import com.kb.domain.mapper.DocumentChunkMapper;
 import com.kb.domain.mapper.DocumentMapper;
 import com.kb.document.chunk.ChunkSplitter;
-import com.kb.rag.vector.PgVectorStore;
+import com.kb.rag.vector.VectorStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -44,7 +44,8 @@ public class DocumentService {
     private final DocumentMapper docs;
     private final DocumentChunkMapper chunks;
     private final KbAccessService access;
-    private final PgVectorStore vectorStore;
+    private final VectorStore vectorStore;
+    private final com.kb.document.parser.OcrService ocrService;
     private final org.springframework.data.redis.core.StringRedisTemplate redis;
     private final Map<String, DocumentParser> parsers = new HashMap<>();
     private final Path uploadRoot;
@@ -54,7 +55,8 @@ public class DocumentService {
                     r -> { Thread t = new Thread(r, "doc-pipe"); t.setDaemon(true); return t; });
 
     public DocumentService(DocumentMapper docs, DocumentChunkMapper chunks, KbAccessService access,
-                           PgVectorStore vectorStore,
+                           VectorStore vectorStore,
+                           com.kb.document.parser.OcrService ocrService,
                            org.springframework.data.redis.core.StringRedisTemplate redis,
                            List<DocumentParser> parserList,
                            @Value("${kb.doc.upload-dir}") String uploadDir) {
@@ -62,6 +64,7 @@ public class DocumentService {
         this.chunks = chunks;
         this.access = access;
         this.vectorStore = vectorStore;
+        this.ocrService = ocrService;
         this.redis = redis;
         for (DocumentParser p : parserList) {
             for (String ext : p.supportedType().split("\\|")) parsers.put(ext, p);
@@ -129,6 +132,12 @@ public class DocumentService {
             DocumentParser parser = parsers.get(d.getFileType());
             if (parser == null) throw new ParserException("不支持的类型: " + d.getFileType());
             ParsedDoc parsed = parser.parse(Path.of(d.getFilePath()));
+            // M6 OCR：扫描版 PDF（解析器标记 needsOcr）→ 视觉模型逐页识别补齐文本。
+            // 策略放管道而非解析器：解析器保持"格式→文本"单一职责，是否花 OCR 成本由此处决策。
+            if (parsed.isNeedsOcr()) {
+                log.info("doc {} needs OCR ({} pages)", d.getId(), parsed.getPageCount());
+                parsed = ocrService.ocr(Path.of(d.getFilePath()), parsed);
+            }
 
             moveTo(d, DocStatus.CHUNKED, null);
             KnowledgeBase kb = access.loadExisting(d.getKbId());
@@ -152,8 +161,8 @@ public class DocumentService {
             }
 
             moveTo(d, DocStatus.EMBEDDING, null);
-            List<PgVectorStore.ChunkRow> vrows = rows.stream()
-                    .map(r -> new PgVectorStore.ChunkRow(r.getId(), r.getKbId(), r.getDocId(), r.getContent()))
+            List<VectorStore.ChunkRow> vrows = rows.stream()
+                    .map(r -> new VectorStore.ChunkRow(r.getId(), r.getKbId(), r.getDocId(), r.getContent()))
                     .toList();
             for (int i = 0; i < vrows.size(); i += 10) {
                 vectorStore.upsert(vrows.subList(i, Math.min(i + 10, vrows.size())));
@@ -170,6 +179,24 @@ public class DocumentService {
             moveTo(d, DocStatus.FAILED, reason);
             log.warn("doc {} FAILED: {}", docId, reason);
         }
+    }
+
+    /**
+     * 同步重跑单文档完整管道（ReindexService 重索引用——它自己已是后台线程，这里要串行可控）。
+     * <h3>为什么先删旧 chunk 再跑</h3>
+     * process() 会重新插入切片行；旧行不删会翻倍，且旧 vector_id 悬空。
+     * 向量侧由调用方(ReindexService.deleteByKbIds)整库清过，这里只清 MySQL 行。
+     * 状态复位 UPLOADED 保证状态机 UPLOADED→PARSING→… 合法推进（类内 moveTo 拒绝非法迁移）。
+     */
+    public void reprocess(Long docId) {
+        Document d = docs.selectById(docId);
+        if (d == null) return;
+        chunks.delete(new LambdaQueryWrapper<DocumentChunk>().eq(DocumentChunk::getDocId, docId));
+        d.setStatus(DocStatus.UPLOADED.name());
+        d.setChunkCount(0);
+        d.setTokens(0);
+        docs.updateById(d);
+        process(docId);
     }
 
     public void retry(User me, Long docId) {

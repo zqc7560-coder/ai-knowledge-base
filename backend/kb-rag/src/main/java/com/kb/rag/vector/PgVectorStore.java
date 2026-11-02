@@ -39,8 +39,8 @@ import java.util.List;
  * 本类不感知 API 密钥——所有向量化调用都经 {@link AiClientFactory}（全工程唯一持有
  * key 的类）发起，符合 docs/03 §L4 调用面收敛要求。
  */
-@Component
-public class PgVectorStore {
+@Component("pgVectorStore")
+public class PgVectorStore implements VectorStore {
 
     /** pg 专用连接池（独立于业务 MySQL；8 连接 = 检索读多写少场景的够用值）。 */
     private final JdbcTemplate pg;
@@ -67,24 +67,9 @@ public class PgVectorStore {
         this.ai = ai;
     }
 
-    public static class Scored {
-        private final Long chunkId;
-        private final Long docId;
-        private final Long kbId;
-        private final String content;
-        private final double score;
-        public Scored(Long chunkId, Long docId, Long kbId, String content, double score) {
-            this.chunkId = chunkId; this.docId = docId; this.kbId = kbId;
-            this.content = content; this.score = score;
-        }
-        public Long chunkId() { return chunkId; }
-        public Long docId() { return docId; }
-        public Long kbId() { return kbId; }
-        public String content() { return content; }
-        public double score() { return score; }
-    }
 
     /** 批量入库：chunks(id,text) -> embedding -> upsert。调用方控制批次大小（≤10 走单请求）。 */
+    @Override
     public int upsert(List<ChunkRow> rows) {
         if (rows.isEmpty()) return 0;
         List<String> texts = rows.stream().map(ChunkRow::content).toList();
@@ -111,35 +96,44 @@ public class PgVectorStore {
         }
     }
 
-    public record ChunkRow(Long chunkId, Long kbId, Long docId, String content) {}
-
+    
+    @Override
     public void deleteByDocIds(Collection<Long> docIds) {
         if (docIds.isEmpty()) return;
         String in = String.join(",", docIds.stream().map(String::valueOf).toList());
         pg.update("DELETE FROM kb_vectors WHERE doc_id IN (" + in + ")");
     }
 
+    @Override
+    public void deleteByKbIds(Collection<Long> kbIds) {
+        if (kbIds.isEmpty()) return;
+        String in = String.join(",", kbIds.stream().map(String::valueOf).toList());
+        pg.update("DELETE FROM kb_vectors WHERE kb_id IN (" + in + ")");
+    }
+
     /**
      * 向量 topK（按库过滤）。score = 内积（-1..1）。
      * 注意 {@code <#>} 运算符返回的是"负内积距离"，取负还原为相似度；HNSW 按距离升序即相似度降序。
      */
-    public List<Scored> search(String query, Collection<Long> kbIds, int topK, double minScore) {
+    @Override
+    public List<Hit> search(String query, Collection<Long> kbIds, int topK, double minScore) {
         if (kbIds.isEmpty()) return List.of();
         float[] qv = ai.embed(List.of(query)).get(0);
         String in = String.join(",", kbIds.stream().map(String::valueOf).toList());
         String sql = "SELECT chunk_id, doc_id, kb_id, content, embedding <#> ?::vector AS dist "
                 + "FROM kb_vectors WHERE kb_id IN (" + in + ") ORDER BY embedding <#> ?::vector LIMIT ?";
-        List<Scored> out = new ArrayList<>();
+        List<Hit> out = new ArrayList<>();
         pg.query(sql, rs -> {
             double score = -rs.getDouble("dist"); // <#> 是负内积距离
             if (score >= minScore) {
-                out.add(new Scored(rs.getLong("chunk_id"), rs.getLong("doc_id"),
+                out.add(new Hit(rs.getLong("chunk_id"), rs.getLong("doc_id"),
                         rs.getLong("kb_id"), rs.getString("content"), score));
             }
         }, toPgVector(qv), toPgVector(qv), topK);
         return out;
     }
 
+    @Override
     public long countByKb(Long kbId) {
         Long n = pg.queryForObject("SELECT count(*) FROM kb_vectors WHERE kb_id = ?", Long.class, kbId);
         return n == null ? 0 : n;
@@ -153,4 +147,7 @@ public class PgVectorStore {
         }
         return sb.append(']').toString();
     }
+
+    @Override
+    public String name() { return "pgvector"; }
 }

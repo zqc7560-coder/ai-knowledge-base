@@ -150,6 +150,38 @@ public class ChatController {
     private final com.kb.domain.mapper.DocumentMapper docMapper;
     private final com.kb.domain.kb.KbAccessService access;
 
+    /**
+     * 引用上下文窗口：给定 chunkId，返回同文档相邻 ±around 个切片（按序），
+     * 供前端"原文预览"抽屉展示并高亮命中块。权限=对该 chunk 所属库 READ。
+     */
+    @PostMapping("/citations/window")
+    public Result<Object> citationWindow(@RequestBody Map<String, Object> body) {
+        Number cid = (Number) body.get("chunkId");
+        int around = body.get("around") == null ? 2 : ((Number) body.get("around")).intValue();
+        if (cid == null) return Result.ok(List.of());
+        var me = auth.currentUser();
+        var hit = chunkMapper.selectById(cid.longValue());
+        if (hit == null) return Result.ok(List.of());
+        access.require(hit.getKbId(), me, com.kb.domain.kb.KbAccessService.Perm.READ);
+        int lo = Math.max(0, hit.getSeqNo() - around), hi = hit.getSeqNo() + around;
+        var list = chunkMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query
+                .LambdaQueryWrapper<com.kb.domain.entity.DocumentChunk>()
+                .eq(com.kb.domain.entity.DocumentChunk::getDocId, hit.getDocId())
+                .between(com.kb.domain.entity.DocumentChunk::getSeqNo, lo, hi)
+                .orderByAsc(com.kb.domain.entity.DocumentChunk::getSeqNo));
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (var c : list) {
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("id", c.getId());
+            m.put("seqNo", c.getSeqNo());
+            m.put("content", c.getContent());
+            m.put("pageNo", c.getPageNo());
+            m.put("titlePath", c.getTitlePath());
+            out.add(m);
+        }
+        return Result.ok(out);
+    }
+
     private static void sendQuiet(SseEmitter emitter, String name, Object data) {
         try {
             emitter.send(SseEmitter.event().name(name).data(data,

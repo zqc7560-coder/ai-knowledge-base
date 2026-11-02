@@ -1,6 +1,6 @@
 package com.kb.rag.prompt;
 
-import com.kb.rag.vector.PgVectorStore;
+import com.kb.rag.vector.VectorStore;
 
 import java.util.List;
 
@@ -16,7 +16,7 @@ public final class RagPrompts {
     public record Cited(int no, Long chunkId, Long docId, String content, double score) {}
 
     /** 按 rerank/融合分数降序裁剪到预算；返回带编号的引用与拼装文本块。 */
-    public static Assembled assemble(List<PgVectorStore.Scored> hits) {
+    public static Assembled assemble(List<VectorStore.Hit> hits) {
         StringBuilder sb = new StringBuilder();
         List<Cited> cites = new java.util.ArrayList<>();
         int used = 0;

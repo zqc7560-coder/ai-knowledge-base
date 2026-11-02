@@ -18,8 +18,7 @@
     </el-card>
 
     <el-card shadow="never" style="margin-top: 14px">
-      <template #header>
-        用户治理
+      <template #header>用户治理
         <el-button size="small" style="float: right" @click="loadAll">刷新</el-button>
       </template>
       <el-table :data="users" size="small">
@@ -47,6 +46,17 @@
     </el-card>
 
     <el-card shadow="never" style="margin-top: 14px">
+      <template #header>点踩答案（检索质量 badcase，可据此补库）</template>
+      <el-table :data="disliked" size="small" empty-text="暂无点踩">
+        <el-table-column prop="conversationId" label="会话" width="70" />
+        <el-table-column prop="content" label="答案摘要" min-width="260">
+          <template #default="{ row }">{{ (row.content || '').slice(0, 80) }}</template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="时间" width="160" />
+      </el-table>
+    </el-card>
+
+    <el-card shadow="never" style="margin-top: 14px">
       <template #header>今日 AI 用量（按用户问答次数，Redis 实时计数）</template>
       <el-table :data="usageRows" size="small" empty-text="今日暂无用量">
         <el-table-column prop="user" label="用户" min-width="120" />
@@ -68,6 +78,7 @@ const isAdmin = computed(() => store.me?.role === "ADMIN");
 const stats = ref<any>({ docsByStatus: [] });
 const users = ref<any[]>([]);
 const usageRows = ref<{ user: string; asks: number }[]>([]);
+const disliked = ref<any[]>([]);
 
 const cards = computed(() => [
   { label: "用户", value: stats.value.users ?? "-" },
@@ -87,6 +98,7 @@ async function loadAll() {
   usageRows.value = Object.entries(usage || {}).map(([k, v]) => ({
     user: userName((k.match(/u(\d+):/) || [])[1]), asks: Number(v),
   }));
+  disliked.value = (await http.get("/admin/messages/disliked")) as any[];
 }
 function userName(id: string) {
   const u = users.value.find(x => String(x.id) === id);

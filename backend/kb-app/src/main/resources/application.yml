@@ -45,7 +45,11 @@ kb:
     embedding-model: ${AI_EMBEDDING_MODEL:text-embedding-v3}
     embedding-dim: ${AI_EMBEDDING_DIM:1024}
     rerank-model: ${AI_RERANK_MODEL:gte-rerank-v2}
+    vision-model: ${AI_VISION_MODEL:qwen-vl-ocr}
   vector:
+    # M6 可切换向量库实现：pgvector（默认）| milvus（REST 适配层）
+    store: ${KB_VECTOR_STORE:pgvector}
+    milvus-url: ${MILVUS_URL:http://localhost:19530}
     url: jdbc:postgresql://${PGVECTOR_HOST:localhost}:${PGVECTOR_PORT:5432}/${PGVECTOR_DB:kb_vectors}
     user: ${PGVECTOR_USER:kb_app}
     password: ${PGVECTOR_PASSWORD}
@@ -57,6 +61,9 @@ kb:
     upload-dir: ${UPLOAD_DIR:./data/uploads}
     chunk-size: 500
     chunk-overlap: 100
+    # M6 OCR：扫描版PDF走视觉模型；max-pages 防大部头书打爆额度
+    ocr-enabled: ${KB_OCR_ENABLED:true}
+    ocr-max-pages: 30
 
 sa-token:
   token-name: Authorization

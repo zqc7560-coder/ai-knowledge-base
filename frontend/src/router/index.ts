@@ -15,11 +15,14 @@ const router = createRouter({
       ],
     },
     { path: "/login", name: "login", component: () => import("../views/LoginView.vue") },
+    // 公开分享页：无需登录（对应 /api/public/** 白名单）
+    { path: "/share/:token", name: "share", component: () => import("../views/ShareView.vue") },
   ],
 });
 
 router.beforeEach((to) => {
   const store = useUserStore();
+  if (to.name === "share") return; // 公开路由直通
   if (to.name !== "login" && !store.loggedIn) return { name: "login" };
   if (to.name === "login" && store.loggedIn) return { name: "home" };
 });

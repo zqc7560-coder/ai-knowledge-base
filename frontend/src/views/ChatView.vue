@@ -30,10 +30,20 @@
             <div class="bubble">
               <div class="md" v-if="m.role === 'assistant'" v-html="renderMd(m.content)"></div>
               <div class="plain" v-else>{{ m.content }}</div>
+              <div class="qfoot" v-if="m.role === 'assistant'">
+                <span v-if="m.elapsedMs" class="ftime">{{ (m.elapsedMs / 1000).toFixed(1) }}s</span>
+                <span v-if="m.model" class="ftime">{{ m.model }}</span>
+                <span class="fb" :class="{ on: m.feedback === 1 }" @click="feedback(m, m.feedback === 1 ? 0 : 1)">👍</span>
+                <span class="fb" :class="{ bad: m.feedback === -1 }" @click="feedback(m, m.feedback === -1 ? 0 : -1)">👎</span>
+              </div>
               <div v-if="m.role === 'assistant' && m.citationList?.length" class="cites">
                 <el-divider content-position="left">引用来源</el-divider>
                 <el-card v-for="ct in m.citationList" :key="ct.no" class="cite" shadow="never">
-                  <div class="citehd">[{{ ct.no }}] {{ ct.docName }} · 相关度 {{ ct.score }}</div>
+                  <div class="citehd">
+                    <span class="cite-link" @click="openPreview(ct)">[{{ ct.no }}] {{ ct.docName }}</span>
+                    <span v-if="ct.pageNo" class="ftime"> · 第{{ ct.pageNo }}页</span>
+                    · 相关度 {{ ct.score }}
+                  </div>
                   <div class="citebody">{{ ct.snippet }}</div>
                 </el-card>
               </div>
@@ -46,13 +56,20 @@
       </div>
 
       <footer class="input">
-        <el-input v-model="q" type="textarea" :rows="2" resize="none"
-                  placeholder="基于知识库提问，Enter 发送，Shift+Enter 换行"
-                  @keydown.enter.exact.prevent="send" />
-        <el-button type="primary" :disabled="!q.trim() || asking || !current" @click="send">发送</el-button>
+        <div class="toolbar" v-if="current">
+          <el-button size="small" text @click="doExport">导出 Markdown</el-button>
+          <el-button size="small" text @click="doShare">分享链接</el-button>
+        </div>
+        <div class="row">
+          <el-input v-model="q" type="textarea" :rows="2" resize="none"
+                    placeholder="基于知识库提问，Enter 发送，Shift+Enter 换行"
+                    @keydown.enter.exact.prevent="send" />
+          <el-button type="primary" :disabled="!q.trim() || asking || !current" @click="send">发送</el-button>
+        </div>
       </footer>
     </section>
 
+    <!-- 新建会话 -->
     <el-dialog v-model="newShow" title="新建对话" width="420px">
       <el-form label-width="80px">
         <el-form-item label="知识库">
@@ -69,18 +86,43 @@
         <el-button type="primary" :disabled="!pickKbs.length" @click="createConv">开始对话</el-button>
       </template>
     </el-dialog>
+
+    <!-- 引用原文预览（M6：同文档切片按序展示，命中块高亮） -->
+    <el-drawer v-model="pvShow" :title="'原文预览 · ' + (pvDoc?.filename || '')" size="46%">
+      <div class="pvlist">
+        <div v-for="ck in pvChunks" :key="ck.id" class="pvchunk" :class="{ hit: ck.id === pvHit }" :ref="el => setRef(ck.id, el)">
+          <div class="pvmeta">切片 #{{ ck.seqNo }}<span v-if="ck.pageNo"> · 第{{ ck.pageNo }}页</span><span v-if="ck.titlePath"> · {{ ck.titlePath }}</span></div>
+          <div class="pvtext">{{ ck.content }}</div>
+        </div>
+      </div>
+    </el-drawer>
+
+    <!-- 分享 -->
+    <el-dialog v-model="shShow" title="分享此会话" width="460px">
+      <p class="shtip">生成只读链接：对方可查看本对话历史，<b>不能提问</b>、看不到你的其它会话与知识库。</p>
+      <el-input v-if="shUrl" :model-value="shUrl" readonly>
+        <template #append><el-button @click="copyShare">复制</el-button></template>
+      </el-input>
+      <div v-if="shareList.length" style="margin-top: 10px">
+        <div v-for="s in shareList" :key="s.token" class="shrow">
+          <span class="mono">{{ origin + '/share/' + s.token }}</span>
+          <el-button size="small" type="danger" text @click="revokeShare(s.token)">撤销</el-button>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from "vue";
+import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "../api/http";
 import { useUserStore } from "../stores/user";
 import { renderMd } from "../utils/md";
 
-interface Cite { no: number; chunkId: number; docId: number; docName: string; snippet: string; score: number }
-interface Msg { role: string; content: string; citeChunkIds?: string; citationList?: Cite[] }
+interface Cite { no: number; chunkId: number; docId: number; docName: string; snippet: string; score: number | string; pageNo?: number }
+interface Msg { id?: number; role: string; content: string; citeChunkIds?: string; citationList?: Cite[];
+  elapsedMs?: number; model?: string; feedback?: number; createdAt?: string }
 
 const store = useUserStore();
 const convs = ref<any[]>([]);
@@ -94,6 +136,17 @@ const box = ref<HTMLElement>();
 const newShow = ref(false);
 const pickKbs = ref<number[]>([]);
 const newTitle = ref("");
+
+const pvShow = ref(false);
+const pvDoc = ref<any>(null);
+const pvChunks = ref<any[]>([]);
+const pvHit = ref<number | null>(null);
+const pvRefs: Record<number, HTMLElement> = {};
+
+const shShow = ref(false);
+const shUrl = ref("");
+const shareList = ref<any[]>([]);
+const origin = window.location.origin;
 
 async function reloadConvs() {
   convs.value = (await http.get("/chat/conversations")) as any[];
@@ -116,13 +169,9 @@ async function createConv() {
 async function select(id: number) {
   current.value = id;
   const hs = (await http.get(`/chat/conversations/${id}/messages`)) as Msg[];
-  // 引用详情：assistant 消息的 citeChunkIds 已在 ask 时通过事件带回，但历史回放需再拉一次
   messages.value = hs.map(h => ({ ...h }));
   for (const m of messages.value) {
-    if (m.role === "assistant" && m.citeChunkIds) {
-      // 历史里的引用内容不在消息表里，简化处理：按 chunkIds 从后端取原文
-      m.citationList = await fetchCites(m.citeChunkIds);
-    }
+    if (m.role === "assistant" && m.citeChunkIds) m.citationList = await fetchCites(m.citeChunkIds);
   }
   scroll();
 }
@@ -130,7 +179,9 @@ async function select(id: number) {
 async function fetchCites(idsCsv: string): Promise<Cite[]> {
   try {
     const ids = idsCsv.split(",").map(Number);
-    return (await http.post("/chat/citations", { chunkIds: ids })) as unknown as Cite[];
+    const arr = (await http.post("/chat/citations", { chunkIds: ids })) as unknown as any[];
+    return arr.map((c, i) => ({ no: i + 1, chunkId: c.chunkId, docId: c.docId,
+      docName: c.docName, snippet: c.snippet, score: "-", pageNo: c.pageNo }));
   } catch { return []; }
 }
 
@@ -146,6 +197,13 @@ async function del(c: any) {
   await http.delete(`/chat/conversations/${c.id}`);
   if (current.value === c.id) { current.value = null; messages.value = []; }
   await reloadConvs();
+}
+
+/** 赞/踩：POST 后本地更新；历史回放依赖后端落库（messages.feedback 列）。 */
+async function feedback(m: Msg, v: number) {
+  if (!m.id) { ElMessage.info("本条为刚生成的流式回答，刷新页面后即可评价"); return; }
+  await http.post(`/messages/${m.id}/feedback`, { value: v });
+  m.feedback = v;
 }
 
 /** 原生 fetch 读 SSE（axios 不便处理流）。 */
@@ -180,14 +238,15 @@ async function send() {
         else if (line.startsWith("data:")) {
           const payload = line.slice(5).trim();
           if (evName === "delta") holder.content += payload.startsWith('"') ? JSON.parse(payload) : payload;
-          else if (evName === "citations") {
-            const j = JSON.parse(payload);
-            holder.citationList = j.citations || [];
-            // 首字到达前展示引用预览
-          } else if (evName === "error") {
+          else if (evName === "citations") holder.citationList = JSON.parse(payload).citations || [];
+          else if (evName === "error") {
             const j = JSON.parse(payload);
             holder.content = holder.content || "⚠ " + j.message;
             ElMessage.error(j.message);
+          } else if (evName === "done") {
+            // done 事件回 elapsedMs；消息 id 由刷新历史获得（评价功能对当轮新消息提示刷新）
+            const j = JSON.parse(payload);
+            holder.elapsedMs = j.elapsedMs;
           }
         }
       }
@@ -201,6 +260,55 @@ async function send() {
   }
 }
 
+// ---------- M6：引用预览 ----------
+function setRef(id: number, el: any) { if (el) pvRefs[id] = el as HTMLElement; }
+async function openPreview(ct: Cite) {
+  pvHit.value = ct.chunkId;
+  pvDoc.value = { filename: ct.docName };
+  pvChunks.value = [];
+  pvShow.value = true;
+  try {
+    // 以命中 chunk 为中心取同文档相邻切片窗口（前后各 2）
+    const win = (await http.post("/chat/citations/window", { chunkId: ct.chunkId, around: 2 })) as unknown as any[];
+    pvChunks.value = win;
+    await nextTick();
+    pvRefs[ct.chunkId]?.scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch { /* 拦截器已提示 */ }
+}
+
+// ---------- M6：导出 / 分享 ----------
+function doExport() {
+  const lines: string[] = ["# " + (convs.value.find(c => c.id === current.value)?.title || "对话"), ""];
+  for (const m of messages.value) {
+    lines.push(m.role === "user" ? `**问：** ${m.content}` : `**答：** ${m.content}`);
+    if (m.citationList?.length) {
+      lines.push("", "> 引用：" + m.citationList.map(c => `[${c.no}] ${c.docName}`).join("、"));
+    }
+    lines.push("");
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `对话导出-${Date.now()}.md`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function doShare() {
+  const r = (await http.post(`/chat/conversations/${current.value}/share`)) as any;
+  shUrl.value = origin + r.url;
+  shareList.value = (await http.get(`/chat/conversations/${current.value}/shares`)) as any[];
+  shShow.value = true;
+}
+async function revokeShare(token: string) {
+  await http.delete(`/chat/conversations/${current.value}/share/${token}`);
+  shareList.value = (await http.get(`/chat/conversations/${current.value}/shares`)) as any[];
+  ElMessage.success("已撤销");
+}
+function copyShare() {
+  navigator.clipboard.writeText(shUrl.value).then(() => ElMessage.success("已复制"));
+}
+
 function scroll() {
   nextTick(() => { if (box.value) box.value.scrollTop = box.value.scrollHeight; });
 }
@@ -210,6 +318,7 @@ onMounted(async () => {
   await reloadConvs();
   if (convs.value.length) select(convs.value[0].id);
 });
+onUnmounted(() => {});
 </script>
 
 <style scoped>
@@ -228,10 +337,27 @@ onMounted(async () => {
 .msg .bubble { max-width: 76%; padding: 10px 14px; border-radius: 10px; background: #f0f2f5; font-size: 14px; line-height: 1.65; }
 .msg.user .bubble { background: #4c7dff; color: #fff; }
 .plain { white-space: pre-wrap; }
+.qfoot { margin-top: 6px; display: flex; gap: 8px; align-items: center; }
+.ftime { color: #b0b3b8; font-size: 12px; }
+.fb { cursor: pointer; opacity: .55; font-size: 14px; user-select: none; }
+.fb:hover { opacity: 1; }
+.fb.on, .fb.bad { opacity: 1; }
 .cites { margin-top: 10px; }
 .cite { margin-bottom: 8px; background: #fafbfd; }
 .citehd { font-size: 12px; color: #4c7dff; margin-bottom: 4px; }
+.cite-link { cursor: pointer; }
+.cite-link:hover { text-decoration: underline; }
 .citebody { font-size: 12.5px; color: #606266; }
 .typing { color: #909399; }
-.input { display: flex; gap: 10px; padding: 12px; border-top: 1px solid #eee; }
+.input { padding: 6px 12px 12px; border-top: 1px solid #eee; }
+.toolbar { display: flex; gap: 4px; margin-bottom: 4px; }
+.row { display: flex; gap: 10px; }
+.pvlist { display: flex; flex-direction: column; gap: 10px; }
+.pvchunk { padding: 10px 12px; border-radius: 8px; background: #f7f8fa; font-size: 13px; }
+.pvchunk.hit { background: #fff7d6; outline: 2px solid #e6a23c; }
+.pvmeta { color: #909399; font-size: 12px; margin-bottom: 4px; }
+.pvtext { white-space: pre-wrap; }
+.shtip { font-size: 13px; color: #606266; margin: 0 0 12px; }
+.shrow { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; padding: 4px 0; }
+.mono { font-family: Consolas, monospace; word-break: break-all; }
 </style>

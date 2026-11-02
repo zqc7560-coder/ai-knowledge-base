@@ -32,6 +32,9 @@ public class SaTokenConfig implements WebMvcConfigurer {
                         "/api/auth/register",
                         "/api/auth/login",
                         "/api/ping",
+                        // 分享只读视图：凭证即授权（随机 token 不可枚举），无登录可访问；
+                        // 端点本身只回会话消息，不含库元信息且不可提问（ShareFeedbackController 注释）
+                        "/api/public/**",
                         "/api/docs/**", "/api/openapi.json", "/api/swagger-ui/**");
     }
 }

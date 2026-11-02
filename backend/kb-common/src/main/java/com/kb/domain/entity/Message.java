@@ -28,6 +28,7 @@
     private Integer elapsedMs;
 
     private String model;
+    private Integer feedback;
 
     private java.time.LocalDateTime createdAt;
     }

@@ -132,6 +132,47 @@ step("H health ping ok", js("/ping").get("code") == 0)
 # 限流/配额键存在（Redis 侧）——以问答能命中 quota 键验证配额生效
 step("F8 rate/quota wired", any(e.get("code") in (1004, 4003) for e in []) or True, "配额在 RagService 内建，冒烟不主动触顶")
 
+# ---------- M6 反馈 / 分享 / 引用预览 / 重建索引 ----------
+amid = next((h.get("id") for h in reversed(hist) if h["role"] == "assistant"), None)
+if amid:
+    step("M6 feedback dislike", js(f"/messages/{amid}/feedback", {"value": -1}, tok).get("code") == 0)
+    step("M6 disliked list admin-only", js("/admin/messages/disliked", token=tok).get("code") == 2002)
+    js(f"/messages/{amid}/feedback", {"value": 0}, tok)  # 复原，避免污染管理页
+else:
+    step("M6 feedback dislike", False, "assistant msg without id?")
+
+sh = js(f"/chat/conversations/{conv}/share", {}, tok, method="POST")
+sh_token = (sh.get("data") or {}).get("token")
+step("M6 share create", bool(sh_token))
+if sh_token:
+    pv = js(f"/public/share/{sh_token}")  # 匿名可读（白名单端点）
+    step("M6 share public readonly", pv.get("code") == 0 and len((pv.get("data") or {}).get("messages", [])) >= 2)
+    step("M6 share revoke", js(f"/chat/conversations/{conv}/share/{sh_token}", token=tok, method="DELETE").get("code") == 0)
+    step("M6 revoked share 404", js(f"/public/share/{sh_token}").get("code") == 1002)
+
+# 引用上下文预览（cites 来自 F6 首轮问答）
+if cites:
+    w = js("/chat/citations/window", {"chunkId": cites[0]["chunkId"], "around": 2}, tok)
+    rows = w.get("data") or []
+    step("M6 citation window preview", w.get("code") == 0 and len(rows) >= 2, f"rows={len(rows)}")
+else:
+    step("M6 citation window preview", False, "no cites captured")
+
+# 重建索引：改小切片参数→reindex→重建后再问答仍命中（参数生效+向量重灌正确）
+js(f"/kb/{kb_id}", {"chunkSize": 300}, tok, method="PUT")   # EDIT 权限用户改参
+rj = js(f"/kb/{kb_id}/reindex", None, tok, method="POST")
+step("M6 reindex trigger", rj.get("code") == 0)
+state = ""
+s = {}
+for _ in range(80):
+    s = js(f"/kb/{kb_id}/reindex-status", token=tok).get("data") or {}
+    state = (s.get("task") or {}).get("state", "")
+    if state == "DONE" or str(state).startswith("FAILED"): break
+    time.sleep(3)
+step("M6 reindex DONE", state == "DONE", str(s.get("task"))[:60])
+ans4, _, _ = ask("XG-200 默认 IP 是多少")
+step("M6 QA after reindex", "192.168.8.100" in ans4, f"ans={ans4[:40]}")
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

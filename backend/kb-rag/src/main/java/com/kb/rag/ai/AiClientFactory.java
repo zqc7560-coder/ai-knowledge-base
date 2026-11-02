@@ -34,6 +34,7 @@ public class AiClientFactory {
     private final String embeddingModel;
     private final int embeddingDim;
     private final String rerankModel;
+    private final String visionModel;
     private final HttpClient http;
 
     public AiClientFactory(
@@ -43,7 +44,8 @@ public class AiClientFactory {
             @Value("${kb.ai.chat-model}") String chatModel,
             @Value("${kb.ai.embedding-model}") String embeddingModel,
             @Value("${kb.ai.embedding-dim}") int embeddingDim,
-            @Value("${kb.ai.rerank-model}") String rerankModel) {
+            @Value("${kb.ai.rerank-model}") String rerankModel,
+            @Value("${kb.ai.vision-model:qwen-vl-ocr}") String visionModel) {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("kb.ai.api-key is not configured (AI_API_KEY env)");
         }
@@ -54,9 +56,10 @@ public class AiClientFactory {
         this.embeddingModel = embeddingModel;
         this.embeddingDim = embeddingDim;
         this.rerankModel = rerankModel;
+        this.visionModel = visionModel;
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
-        log.info("AiClientFactory init models=[chat:{}, emb:{}, dim:{}, rerank:{}] keyMask={}",
-                chatModel, embeddingModel, embeddingDim, rerankModel, mask(apiKey));
+        log.info("AiClientFactory init models=[chat:{}, emb:{}, dim:{}, rerank:{}, vision:{}] keyMask={}",
+                chatModel, embeddingModel, embeddingDim, rerankModel, visionModel, mask(apiKey));
     }
 
     public static String mask(String key) {
@@ -211,6 +214,35 @@ public class AiClientFactory {
     }
 
     public record RerankItem(int index, double score) {}
+
+    /**
+     * 视觉模型单图问答（M6 OCR 用）。
+     * <h3>为什么单独开这个方法</h3>
+     * OCR 走的是【多模态消息】——content 不是字符串而是 [image_url, text] 数组，
+     * 与现有纯文本 chat 的 body 结构不同，混用会让泛型签名变复杂；单图单问的 OCR
+     * 场景独立成方法最清晰，且只有 OcrService 一个调用方（复用 AiUpstreamException 语义）。
+     *
+     * 模型可配（kb.ai.vision-model，默认 qwen-vl-ocr——实测该 key 可用的唯一 VL 模型，
+     * 中文识别准确；qwen-vl-max/plus 此 key 未开通，404）。
+     *
+     * 密钥安全：同其它方法，Bearer 仅在 post() 内拼接，报文不回显（L4/L6）。
+     */
+    public String visionOcr(byte[] imageBytes, String instruction) {
+        String dataUrl = "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(imageBytes);
+        java.util.List<Map<String, Object>> content = java.util.List.of(
+                Map.of("type", "image_url", "image_url", Map.of("url", dataUrl)),
+                Map.of("type", "text", "text", instruction));
+        Map<String, Object> body = Map.of(
+                "model", visionModel,
+                "messages", java.util.List.of(Map.of("role", "user", "content", content)),
+                "max_tokens", 2000);
+        String resp = post(baseUrl + "/chat/completions", toJson(body), Duration.ofSeconds(120));
+        Map<String, Object> parsed = fromJson(resp);
+        List<Map<String, Object>> choices = (List<Map<String, Object>>) parsed.get("choices");
+        if (choices == null || choices.isEmpty()) throw new AiUpstreamException("OCR 返回空", false, null);
+        Map<String, Object> msg = (Map<String, Object>) choices.get(0).get("message");
+        return String.valueOf(msg.get("content"));
+    }
 
     // ---------- infra ----------
 
