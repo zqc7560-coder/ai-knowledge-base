@@ -211,6 +211,22 @@ with urllib.request.urlopen(reqp, timeout=180) as resp:
             elif name == "citations": citesp = json.loads(d).get("citations", [])
 step("M8.1 pc-on QA answers with citation", "192.168.8.100" in ansp and len(citesp) > 0, ansp[:50])
 
+# ---------- M9.1 PPTX/XLSX ----------
+def _fn_tag(x): return "pptx" if x.endswith("pptx") else "xlsx"
+_sampdir = pathlib.Path(__file__).resolve().parent.parent / "samples"
+for _fn in ["智慧园区启动会.pptx", "园区物业数据表.xlsx"]:
+    _r = upload(f"/kb/{kb_id}/documents", _fn, (_sampdir / _fn).read_bytes(), tok)
+    step(f"M9.1 {_fn_tag(_fn)} accepted", _r.get("code") == 0, str(_r.get("message", ""))[:40])
+step("M9.1 fake pptx rejected",
+     upload(f"/kb/{kb_id}/documents", f"e{SUF}.pptx", b"MZ\x90\x00" + b"\x00" * 300, tok).get("code") == 3003)
+_m9ids = [d for d in (js(f"/documents?kbId={kb_id}", token=tok).get("data") or [])
+          if d["filename"].endswith((".pptx", ".xlsx"))]
+for _ in range(60):
+    _sts = [js(f"/documents/{d['id']}/status", token=tok)["data"]["status"] for d in _m9ids]
+    if all(s in ("READY", "FAILED") for s in _sts): break
+    time.sleep(2)
+step("M9.1 pptx+xlsx READY", _sts and all(s == "READY" for s in _sts), str(_sts))
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

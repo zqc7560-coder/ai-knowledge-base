@@ -10,7 +10,7 @@ import java.util.Set;
 
 /** 扩展名白名单 + Magic Number 双校验（docs/02 2.1）。 */
 public final class FileValidator {
-    private static final Set<String> ALLOWED_EXT = Set.of("pdf", "docx", "txt", "md", "markdown");
+    private static final Set<String> ALLOWED_EXT = Set.of("pdf", "docx", "txt", "md", "markdown", "pptx", "xlsx");
     private static final Map<String, byte[][]> MAGIC = Map.of(
             "pdf", new byte[][]{ new byte[]{'%','P','D','F','-'} },
             // docx 是 zip：PK\x03\x04
@@ -18,7 +18,10 @@ public final class FileValidator {
             // 文本类没有固定魔数，仅防二进制：首 512 字节里 0x00 视为可疑
             "txt", new byte[][]{ new byte[]{} },
             "md", new byte[][]{ new byte[]{} },
-            "markdown", new byte[][]{ new byte[]{} });
+            "markdown", new byte[][]{ new byte[]{} },
+            // M9.1：pptx/xlsx 同为 OOXML zip（PK\x03\x04 魔数与 docx 一致，扩展名区分类型）
+            "pptx", new byte[][]{ new byte[]{'P','K',3,4} },
+            "xlsx", new byte[][]{ new byte[]{'P','K',3,4} });
 
     private FileValidator() {}
 
@@ -33,7 +36,7 @@ public final class FileValidator {
     public static String validate(String filename, long size, Path stored) {
         String ext = extOf(filename);
         if (!ALLOWED_EXT.contains(ext))
-            throw BizException.of(BizCode.FILE_TYPE_NOT_ALLOWED, "仅支持 PDF/DOCX/TXT/MD");
+            throw BizException.of(BizCode.FILE_TYPE_NOT_ALLOWED, "仅支持 PDF/DOCX/TXT/MD/PPTX/XLSX");
         if (size > 20L * 1024 * 1024)
             throw BizException.of(BizCode.FILE_TOO_LARGE, "文件超过 20MB");
         if (size == 0) throw BizException.of(BizCode.FILE_TYPE_NOT_ALLOWED, "空文件");

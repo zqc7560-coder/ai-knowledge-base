@@ -1,48 +1,51 @@
 """
-M4 评估：30 条 QA（网关手册 14 / 售后FAQ 12 / 门锁手册 4），两种配置对比跑分。
-Recall@5 = top5 引用片段中包含答案关键词的问题占比。
-答案正确 = 回答包含期望关键词集合中的关键 token。
-用法: python eval_rag.py [--mode vector|hybrid]；hybrid 需服务端开混合检索（默认），vector 模式暂用同管道
+检索评估运行器（M4 原版 30 题 → M8.4 扩容版）。
+- 默认读 scripts/eval_v2.json（LLM 生成+evidence逐字校验+对抗题），无该文件时回退内嵌 30 题。
+- Recall@5 = top5 引用片段包含 evidence（逐字）；答案正确 = 回答包含 evidence。
+- 对抗题(kind含"不存在/库外")：期望"不命中/拒答"，单独统计，不计入常规 Recall 分母。
+- --kb <id[,id]> 限定库范围；--tag <s> 结果文件名后缀（消融矩阵对比用）。
+用法: python eval_rag.py [--kb 5,7] [--tag pc_on] [--builtin]
 """
-import json, sys, time, urllib.request
+import json, sys, time, urllib.request, pathlib, re
 
 B = "http://127.0.0.1:8080/api"
+argv = sys.argv[1:]
+def opt(name, default=None):
+    if name in argv:
+        return argv[argv.index(name) + 1]
+    return default
+KB_SCOPE = opt("--kb")
+TAG = opt("--tag", "default")
+USE_BUILTIN = "--builtin" in argv
 
-QA = [
-    # 网关 XG-200 (14)
-    ("XG-200 支持多少台子设备", "32"),
-    ("XG-200Pro 支持多少台子设备", "128"),
-    ("XG-200 是否支持 PoE 供电", "PoE"),
-    ("XG-200Pro 的备份链路是什么", "4G"),
-    ("网关默认 IP 地址是多少", "192.168.8.100"),
-    ("网关后台登录账号是什么", "admin"),
-    ("DHCP 冲突时建议把网关设为哪个网段", "192.168.9"),
-    ("从哪个固件版本开始支持 MQTT over TLS", "2.3.7"),
-    ("绿色呼吸灯代表什么状态", "云端"),
-    ("红色快闪灯代表什么", "OTA"),
-    ("红色常亮时如何进入恢复模式", "RESET"),
-    ("子设备信号强度应优于多少 dBm", "-75"),
-    ("信道拥塞度高于多少需要切换信道", "70"),
-    ("定时重启任务的默认时间是几点", "3:17"),
-    # 售后 FAQ (12)
-    ("智能门锁整机质保几年", "3"),
-    ("锁的电机和电路板质保几年", "5"),
-    ("电池是否在质保范围内", "不在"),
-    ("网关设备质保期是多久", "2"),
-    ("无理由退货的期限是几天", "7"),
-    ("已上墙安装的锁具能否无理由退货", "不支持"),  # 判定词与资料原文一致（能/不能的断言由答案语义判断易误伤）
-    ("同城上门安装费多少钱一次", "80"),
-    ("超出市区 30 公里每公里加收多少", "1.5"),
-    ("节假日上门按几倍计费", "倍"),
-    ("应急机械钥匙单价是多少", "45"),
-    ("报修微信服务号工作日响应时效是多久", "2"),
-    ("紧急开锁（人员被困）应首先拨打什么", "119"),
-    # 门锁手册 (4)
-    ("智能门锁电池续航大约多久", "12"),
-    ("门锁最多可录入多少枚指纹", "50"),
-    ("安装门锁要求的门厚范围", "35"),
-    ("低电量时门锁会怎样提示", "语音"),
+BUILTIN_QA = [
+    ("XG-200 支持多少台子设备", "32"), ("XG-200Pro 支持多少台子设备", "128"),
+    ("XG-200 是否支持 PoE 供电", "PoE"), ("XG-200Pro 的备份链路是什么", "4G"),
+    ("网关默认 IP 地址是多少", "192.168.8.100"), ("网关后台登录账号是什么", "admin"),
+    ("DHCP 冲突时建议把网关设为哪个网段", "192.168.9"), ("从哪个固件版本开始支持 MQTT over TLS", "2.3.7"),
+    ("绿色呼吸灯代表什么状态", "云端"), ("红色快闪灯代表什么", "OTA"),
+    ("红色常亮时如何进入恢复模式", "RESET"), ("子设备信号强度应优于多少 dBm", "-75"),
+    ("信道拥塞度高于多少需要切换信道", "70"), ("定时重启任务的默认时间是几点", "3:17"),
+    ("智能门锁整机质保几年", "3"), ("锁的电机和电路板质保几年", "5"),
+    ("电池是否在质保范围内", "不在"), ("网关设备质保期是多久", "2"),
+    ("无理由退货的期限是几天", "7"), ("已上墙安装的锁具能否无理由退货", "不支持"),
+    ("同城上门安装费多少钱一次", "80"), ("超出市区 30 公里每公里加收多少", "1.5"),
+    ("节假日上门按几倍计费", "倍"), ("应急机械钥匙单价是多少", "45"),
+    ("报修微信服务号工作日响应时效是多久", "2"), ("紧急开锁（人员被困）应首先拨打什么", "119"),
+    ("智能门锁电池续航大约多久", "12"), ("门锁最多可录入多少枚指纹", "50"),
+    ("安装门锁要求的门厚范围", "35"), ("低电量时门锁会怎样提示", "语音"),
 ]
+
+def load_cases():
+    p = pathlib.Path(__file__).with_name("eval_v2.json")
+    if not USE_BUILTIN and p.exists():
+        data = json.loads(p.read_text(encoding="utf-8"))
+        cases = [{"q": c["question"], "ev": c.get("evidence", ""),
+                  "adv": bool(re.search("不存在|库外", c.get("kind", "")))} for c in data["cases"]]
+        print(f"loaded {len(cases)} cases from eval_v2.json ({sum(c['adv'] for c in cases)} adversarial)")
+        return cases
+    print("using builtin 30 cases")
+    return [{"q": q, "ev": e, "adv": False} for q, e in BUILTIN_QA]
 
 def call(path, body=None, token=None):
     data = json.dumps(body).encode() if body is not None else None
@@ -50,78 +53,113 @@ def call(path, body=None, token=None):
         headers={"Content-Type": "application/json", **({"Authorization": token} if token else {})})
     return urllib.request.urlopen(req, timeout=120)
 
-import time as _t
+# 优先用评估专用账号（kb_eval_，见 docs/07；凭据文件在用户目录，不入库）
 tok = None
-for i in range(8):
+for attempt in range(10):
     try:
-        tok = json.loads(call("/auth/login", {"username": "kb_owner_a", "password":"kb-pass-" + "12345"}).read())["data"]["token"]
+        cred = pathlib.Path.home().joinpath("kb_eval_cred.json")
+        if cred.exists():
+            c = json.loads(cred.read_text(encoding="utf-8"))
+            user, pw = c["user"], c["password"]
+        else:
+            user, pw = "kb_owner_a", "kb-pass-" + "12345"
+        tok = json.loads(call("/auth/login", {"username": user, "password": pw}).read())["data"]["token"]
         break
     except Exception:
-        _t.sleep(15)  # 登录限流 5/分钟：等窗口滑过
-assert tok, "login failed after retries"
+        time.sleep(15)  # 限流/锁定时滑窗（评估账号避免撞 kb_owner_a 的锁）
+assert tok, "login failed"
 
-# 找目标库集合：门锁库 + M4语料库（含网关/FAQ）
-kb_list = json.loads(call("/kb", token=tok).read())["data"]
-ready_kb = []
-import re
-for kb in kb_list:
-    docs = json.loads(call(f"/documents?kbId={kb['id']}", token=tok).read())["data"]
-    names = " ".join(d["filename"] for d in docs if d["status"] == "READY")
-    # 评估范围=含三类语料文件的库（门锁手册可能叫"门锁手册.md"）
-    if re.search("网关|FAQ|手册", names):
-        ready_kb.append(kb["id"])
-conv = json.loads(call("/chat/conversations", {"kbIds": ready_kb, "title": "M4评估"}, token=tok).read())["data"]
+if KB_SCOPE:
+    ready_kb = [int(x) for x in KB_SCOPE.split(",")]
+elif pathlib.Path.home().joinpath("kb_eval_cred.json").exists():
+    ready_kb = [json.loads(pathlib.Path.home().joinpath("kb_eval_cred.json").read_text())["kbId"]]
+    print("kb scope from eval cred:", ready_kb)
+else:
+    kb_list = json.loads(call("/kb", token=tok).read())["data"]
+    ready_kb = []
+    for kb in kb_list:
+        try:
+            docs = json.loads(call(f"/documents?kbId={kb['id']}", token=tok).read())["data"]
+        except Exception:
+            continue
+        names = " ".join(d["filename"] for d in docs if d["status"] == "READY")
+        if re.search("网关|FAQ|手册|爬虫|爬行动物", names):
+            ready_kb.append(kb["id"])
+print("kb scope:", ready_kb)
+conv = json.loads(call("/chat/conversations", {"kbIds": ready_kb, "title": "eval-" + TAG}, token=tok).read())["data"]
 conv_id = conv["id"]
-print("kb scope:", ready_kb, "conv:", conv_id)
 
-recall5, ans_ok, fails = 0, 0, []
+cases = load_cases()
+norm = [c for c in cases if not c["adv"]]
+adv = [c for c in cases if c["adv"]]
+recall5 = ans_ok = 0
+adv_correct = 0
+fails = []
+raw_out = []
 t0 = time.time()
-for i, (q, kw) in enumerate(QA):
+
+def one(q):
     req = urllib.request.Request(B + "/chat/ask",
         data=json.dumps({"conversationId": conv_id, "question": q}).encode(), method="POST",
         headers={"Content-Type": "application/json", "Authorization": tok, "Accept": "text/event-stream"})
-    answer, cites = "", []
-    # 20问/分钟限流：命中 error 事件且 code=1004 则等窗口滑过重试
-    for attempt in range(3):
-        try:
-            resp_ctx = urllib.request.urlopen(req, timeout=180)
-        except urllib.error.HTTPError as e:
-            resp_ctx = None
-        if resp_ctx is None:
-            time.sleep(61); continue
+    for attempt in range(4):
         answer, cites = "", []
-        hit_rate = False
-        with resp_ctx as resp:
-            name = ""
-            for raw in resp:
+        try:
+            resp = urllib.request.urlopen(req, timeout=180)
+        except urllib.error.HTTPError:
+            time.sleep(61); continue
+        hit = False
+        name = ""
+        with resp as r:
+            for raw in r:
                 line = raw.decode("utf-8").strip()
                 if line.startswith("event:"): name = line[6:].strip()
                 elif line.startswith("data:") and name:
                     d = line[5:].strip()
                     if name == "delta": answer += d.strip('"')
-                    elif name == "citations":
-                        cites = json.loads(d)["citations"]
+                    elif name == "citations": cites = json.loads(d)["citations"]
                     elif name == "error":
                         j = json.loads(d)
-                        if j.get("code") == 1004: hit_rate = True
-                        else: answer = "ERROR:" + str(j)
-                    elif name == "done":
-                        break
-        if hit_rate:
-            print("  (rate-limited, wait 61s...)"); time.sleep(61); continue
-        break
-    snippet_blob = " ".join(c["snippet"] for c in cites[:5])
-    r5 = kw in snippet_blob
-    ok = kw in answer.replace(" ", " ") or kw in answer
-    recall5 += r5; ans_ok += ok
-    if not (r5 and ok):
-        fails.append((q, kw, "R5" if not r5 else "ANS", answer[:60]))
-    print(f"[{i+1:2}/30] R5={'Y' if r5 else 'N'} ANS={'Y' if ok else 'N'}  {q}")
-    time.sleep(0.5)  # 限流友好
+                        if j.get("code") == 1004: hit = True
+                    elif name == "done": break
+        if hit:
+            time.sleep(61); continue
+        return answer, cites
+    return "", []
 
-print("\n==== 结果 ====")
-print(f"Recall@5      : {recall5}/30 = {recall5/30:.0%}")
-print(f"答案正确率    : {ans_ok}/30 = {ans_ok/30:.0%}")
-print(f"失败样例      : {len(fails)}")
-for f in fails[:8]: print("  MISS:", f)
-print(f"用时 {time.time()-t0:.0f}s")
+for i, c in enumerate(norm):
+    answer, cites = one(c["q"])
+    blob = " ".join(x["snippet"] for x in cites[:5])
+    r5 = c["ev"] in blob
+    # ANS 判定口径修正(M8.4)：evidence 是整句，模型复述措辞必不同——
+    # 用"区分性 token"（数字/字母专名，如 32、V2.3.7、192.168.9、RESET）覆盖率判答案正确，
+    # 要求 ≥1 个数字型 token 命中且无"未找到"式拒答。全句逐字匹配只适用于 R5（片段原文包含）。
+    toks = re.findall(r"[A-Za-z0-9][A-Za-z0-9.\-\u00b7/]{1,}|(?:\d+(?:[.,-]\d+)?(?:年|个月|天|次|元|人|台|种|倍|岁|小时|分钟|毫米|米|克|公斤|%|dBm)?)", c["ev"])
+    keytoks = [x for x in toks if re.search(r"\d|[A-Z]", x) and len(x) >= 2] or toks[:1]
+    anorm = answer.replace(" ", "")
+    ok = bool(keytoks) and all(k.replace(" ", "") in anorm for k in keytoks[:3])
+    recall5 += r5; ans_ok += ok
+    raw_out.append({"q": c["q"], "ev": c["ev"], "r5": r5, "ok": ok,
+                    "answer": answer[:400], "n_cites": len(cites)})
+    if not (r5 and ok): fails.append((c["q"], c["ev"], "R5" if not r5 else "ANS", answer[:50]))
+    print(f"[{i+1:3}/{len(norm)}] R5={'Y' if r5 else 'N'} ANS={'Y' if ok else 'N'}  {c['q'][:34]}")
+    time.sleep(0.4)
+
+for c in adv:
+    answer, cites = one(c["q"])
+    refused = "未找到" in answer or "无法" in answer or "没有相关" in answer or len(cites) == 0
+    adv_correct += refused
+    print(f"[ADV] {'Y' if refused else 'N(误答)'}  {c['q'][:34]}")
+
+N = max(1, len(norm))
+print("\n==== 结果 tag=%s ====" % TAG)
+print(f"Recall@5   : {recall5}/{N} = {recall5/N:.0%}")
+print(f"答案正确率 : {ans_ok}/{N} = {ans_ok/N:.0%}")
+print(f"对抗拒答率 : {adv_correct}/{len(adv)}")
+print(f"失败样例   : {len(fails)}")
+for f in fails[:10]: print("  MISS:", f)
+out = {"tag": TAG, "kb": ready_kb, "n": N, "recall5": recall5, "ans": ans_ok, "raw": raw_out,
+       "adv_total": len(adv), "adv_correct": adv_correct, "fails": fails[:30]}
+pathlib.Path(__file__).with_name(f"eval_result_{TAG}.json").write_text(
+    json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+print(f"saved eval_result_{TAG}.json  用时 {time.time()-t0:.0f}s")

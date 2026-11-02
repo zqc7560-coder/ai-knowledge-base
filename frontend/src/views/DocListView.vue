@@ -10,10 +10,10 @@
       </el-button>
     </div>
 
-    <el-upload drag :auto-upload="false" :show-file-list="false" accept=".pdf,.docx,.txt,.md,.markdown"
+    <el-upload drag :auto-upload="false" :show-file-list="false" accept=".pdf,.docx,.txt,.md,.markdown,.pptx,.xlsx"
                :on-change="onFile" class="up">
       <el-icon size="40"><UploadFilled /></el-icon>
-      <div>拖拽或点击上传 <b>PDF / Word(docx) / TXT / Markdown</b>（≤20MB）</div>
+      <div>拖拽或点击上传 <b>PDF / Word(docx) / PPT / Excel / TXT / Markdown</b>（≤20MB）</div>
     </el-upload>
 
     <el-table :data="docs" style="margin-top: 18px" v-loading="loading">
