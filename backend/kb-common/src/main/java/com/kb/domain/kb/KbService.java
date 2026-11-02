@@ -33,7 +33,8 @@ public class KbService {
     }
 
     public record CreateCmd(String name, String description, String visibility,
-                            Integer chunkSize, Integer chunkOverlap, Integer topK, BigDecimal scoreThreshold) {}
+                            Integer chunkSize, Integer chunkOverlap, Integer topK, BigDecimal scoreThreshold,
+                            Boolean parentChild, Integer pcSpan) {}
 
     public KnowledgeBase create(User me, CreateCmd cmd) {
         if (cmd.name() == null || cmd.name().isBlank() || cmd.name().length() > 100)
@@ -50,6 +51,8 @@ public class KbService {
         kb.setTopK(clamp(cmd.topK(), 1, 20, 5));
         kb.setScoreThreshold(cmd.scoreThreshold() == null ? new BigDecimal("0.250") : cmd.scoreThreshold());
         kb.setEmbeddingModel("text-embedding-v3");
+        kb.setParentChild(Boolean.TRUE.equals(cmd.parentChild()) ? 1 : 0);
+        kb.setPcSpan(clamp(cmd.pcSpan(), 1, 5, 2));
         kb.setDeleted(0);
         kbs.insert(kb);
         return kb;
@@ -70,6 +73,8 @@ public class KbService {
         if (cmd.chunkOverlap() != null) kb.setChunkOverlap(clamp(cmd.chunkOverlap(), 0, 500, kb.getChunkOverlap()));
         if (cmd.topK() != null) kb.setTopK(clamp(cmd.topK(), 1, 20, kb.getTopK()));
         if (cmd.scoreThreshold() != null) kb.setScoreThreshold(cmd.scoreThreshold());
+        if (cmd.parentChild() != null) kb.setParentChild(cmd.parentChild() ? 1 : 0);
+        if (cmd.pcSpan() != null) kb.setPcSpan(clamp(cmd.pcSpan(), 1, 5, kb.getPcSpan() == null ? 2 : kb.getPcSpan()));
         kbs.updateById(kb);
         return kb;
     }

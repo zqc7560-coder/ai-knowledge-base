@@ -31,6 +31,10 @@
 
     private String embeddingModel;
 
+    private Integer parentChild;
+
+    private Integer pcSpan;
+
     @TableLogic
     private Integer deleted;
 

@@ -164,7 +164,19 @@ public class RagService {
         }
 
         // 4. 上下文组装
-        RagPrompts.Assembled ctx = RagPrompts.assemble(ranked);
+        //    M8.1 parent-child（small-to-big）：检索命中"子片"（当前粒度，精确定位），
+        //    喂模型前扩展为同文档 ±span 的"父窗"（大上下文，防关键句被切散导致答非所问）。
+        //    引用编号/原文抽屉仍锚定 child——定位精度不因父窗变粗。
+        //    开关按会话首库口径（多库联合问答时以第一个库的设置为准，docs/07 如实标注）。
+        boolean pcOn = firstKb.getParentChild() != null && firstKb.getParentChild() == 1;
+        List<VectorStore.Hit> feed = ranked;
+        RagPrompts.Assembled ctx;
+        if (pcOn) {
+            feed = expandWithParents(ranked, firstKb.getPcSpan() == null ? 2 : firstKb.getPcSpan());
+            ctx = RagPrompts.assemble(feed, 2000, 6500);   // 父窗更长：snippet/预算同步放宽
+        } else {
+            ctx = RagPrompts.assemble(ranked);
+        }
 
         // 5. 生成（流式或同步）
         List<Map<String, String>> msgs = new ArrayList<>();
@@ -295,6 +307,33 @@ public class RagService {
         for (var f : fused) {
             var s = byChunk.get(f.chunkId());
             if (s != null) out.add(new VectorStore.Hit(s.chunkId(), s.docId(), s.kbId(), s.content(), f.score()));
+        }
+        return out;
+    }
+
+    /**
+     * child→parent 窗口扩展：同文档 seqNo±span 合并为一段喂模型。
+     * 窗口重叠去重：低名次命中若与已扩展窗口相交，退化为 child 原文（不重复喂同一段）。
+     */
+    private List<VectorStore.Hit> expandWithParents(List<VectorStore.Hit> ranked, int span) {
+        Map<Long, java.util.TreeSet<Integer>> covered = new java.util.HashMap<>();
+        List<VectorStore.Hit> out = new ArrayList<>();
+        for (var h : ranked) {
+            var row = chunkMapper.selectById(h.chunkId());
+            if (row == null || row.getSeqNo() == null) { out.add(h); continue; }
+            int lo = Math.max(0, row.getSeqNo() - span), hi = row.getSeqNo() + span;
+            var seen = covered.computeIfAbsent(h.docId(), k -> new java.util.TreeSet<>());
+            boolean overlap = false;
+            for (int s = lo; s <= hi && !overlap; s++) overlap = seen.contains(s);
+            if (overlap) { out.add(h); continue; }
+            for (int s = lo; s <= hi; s++) seen.add(s);
+            var sib = chunkMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<DocumentChunk>()
+                    .eq(DocumentChunk::getDocId, h.docId())
+                    .between(DocumentChunk::getSeqNo, lo, hi)
+                    .orderByAsc(DocumentChunk::getSeqNo));
+            String merged = sib.stream().map(DocumentChunk::getContent)
+                    .reduce((a, b) -> a + "\n" + b).orElse(h.content());
+            out.add(new VectorStore.Hit(h.chunkId(), h.docId(), h.kbId(), merged, h.score()));
         }
         return out;
     }

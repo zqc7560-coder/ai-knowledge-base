@@ -183,6 +183,34 @@ step("M7.2 usage-month tokens>0", mm.get("code") == 0 and (mdata.get("totalToken
      f"tokens={mdata.get('totalTokens')} cost={mdata.get('totalCostYuan')}")
 step("M7.2 cost>0", float(mdata.get("totalCostYuan") or 0) > 0)
 
+# ---------- M8.1 父子分块 ----------
+kbpc = js("/kb", {"name": "M8父子分块库", "chunkSize": 200, "parentChild": True, "pcSpan": 2}, tok)
+kbpcid = kbpc["data"]["id"]
+step("M8.1 kb parentChild=1 persisted", kbpc["data"].get("parentChild") == 1)
+upr = upload(f"/kb/{kbpcid}/documents", f"gwp{SUF}.md", md, tok)
+step("M8.1 doc accepted", upr.get("code") == 0)
+did = (upr.get("data") or {}).get("id")
+for _ in range(60):
+    stt = js(f"/documents/{did}/status", token=tok).get("data") or {}
+    if stt.get("status") in ("READY", "FAILED"): break
+    time.sleep(2)
+step("M8.1 doc READY (pc kb)", stt.get("status") == "READY", f"chunks={stt.get('chunkCount')}")
+convp = (js("/chat/conversations", {"kbIds": [kbpcid], "title": "m8smoke"}, tok).get("data") or {}).get("id")
+reqp = urllib.request.Request(BASE + "/chat/ask",
+    data=json.dumps({"conversationId": convp, "question": "XG-200 默认 IP 是多少"}).encode(), method="POST",
+    headers={"Content-Type": "application/json", "Authorization": tok, "Accept": "text/event-stream"})
+ansp, citesp = "", []
+with urllib.request.urlopen(reqp, timeout=180) as resp:
+    name = ""
+    for raw in resp:
+        line = raw.decode().strip()
+        if line.startswith("event:"): name = line[6:].strip()
+        elif line.startswith("data:") and name:
+            d = line[5:].strip()
+            if name == "delta": ansp += d.strip('"')
+            elif name == "citations": citesp = json.loads(d).get("citations", [])
+step("M8.1 pc-on QA answers with citation", "192.168.8.100" in ansp and len(citesp) > 0, ansp[:50])
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

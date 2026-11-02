@@ -27,7 +27,8 @@ public class KbController {
 
     public record CreateReq(@NotBlank String name, String description, String visibility,
                             Integer chunkSize, Integer chunkOverlap, Integer topK,
-                            java.math.BigDecimal scoreThreshold) {}
+                            java.math.BigDecimal scoreThreshold,
+                            Boolean parentChild, Integer pcSpan) {}
 
     @GetMapping
     public Result<List<KnowledgeBase>> list() {
@@ -69,6 +70,7 @@ public class KbController {
 
     private static KbService.CreateCmd toCmd(CreateReq r) {
         return new KbService.CreateCmd(r.name(), r.description(), r.visibility(),
-                r.chunkSize(), r.chunkOverlap(), r.topK(), r.scoreThreshold());
+                r.chunkSize(), r.chunkOverlap(), r.topK(), r.scoreThreshold(),
+                r.parentChild(), r.pcSpan());
     }
 }

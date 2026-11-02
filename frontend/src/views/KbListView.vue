@@ -53,6 +53,13 @@
         <el-form-item label="相似阈值">
           <el-input-number v-model="f.scoreThreshold" :min="0" :max="1" :step="0.05" :precision="3" />
         </el-form-item>
+        <el-form-item label="父子分块">
+          <el-switch v-model="f.parentChild" />
+          <span class="hint" style="margin-left:10px">命中精确小片，回答前自动扩展前后文（M8）</span>
+        </el-form-item>
+        <el-form-item v-if="f.parentChild" label="父窗范围">
+          <el-input-number v-model="f.pcSpan" :min="1" :max="5" /> 片
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dlgShow = false">取消</el-button>
@@ -90,7 +97,8 @@ import { ElMessage } from "element-plus";
 import { http } from "../api/http";
 
 interface Kb { id: number; name: string; description?: string; visibility: string;
-  chunkSize: number; chunkOverlap: number; topK: number; scoreThreshold: number }
+  chunkSize: number; chunkOverlap: number; topK: number; scoreThreshold: number;
+  parentChild?: number; pcSpan?: number }
 
 const kbs = ref<Kb[]>([]);
 const loading = ref(true);
@@ -98,7 +106,7 @@ const dlgShow = ref(false);
 const saving = ref(false);
 const editing = ref<Kb | null>(null);
 const f = reactive({ name: "", description: "", visibility: "PRIVATE",
-  chunkSize: 500, chunkOverlap: 100, topK: 5, scoreThreshold: 0.25 });
+  chunkSize: 500, chunkOverlap: 100, topK: 5, scoreThreshold: 0.25, parentChild: false, pcSpan: 2 });
 
 const memShow = ref(false);
 const memberKb = ref<Kb | null>(null);
@@ -118,7 +126,7 @@ async function reload() {
 function openCreate() {
   editing.value = null;
   Object.assign(f, { name: "", description: "", visibility: "PRIVATE",
-    chunkSize: 500, chunkOverlap: 100, topK: 5, scoreThreshold: 0.25 });
+    chunkSize: 500, chunkOverlap: 100, topK: 5, scoreThreshold: 0.25, parentChild: false, pcSpan: 2 });
   dlgShow.value = true;
 }
 
@@ -126,7 +134,7 @@ function openSettings(kb: Kb) {
   editing.value = kb;
   Object.assign(f, { name: kb.name, description: kb.description || "", visibility: kb.visibility,
     chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap, topK: kb.topK,
-    scoreThreshold: Number(kb.scoreThreshold) });
+    scoreThreshold: Number(kb.scoreThreshold), parentChild: kb.parentChild === 1, pcSpan: kb.pcSpan || 2 });
   dlgShow.value = true;
 }
 

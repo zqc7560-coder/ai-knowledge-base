@@ -17,14 +17,22 @@ public final class RagPrompts {
 
     /** 按 rerank/融合分数降序裁剪到预算；返回带编号的引用与拼装文本块。 */
     public static Assembled assemble(List<VectorStore.Hit> hits) {
+        return assemble(hits, 700, CONTEXT_CHAR_BUDGET);
+    }
+
+    /**
+     * 参数化重载（M8.1 parent-child）：父窗内容更长，snippet/预算由调用方放宽。
+     * 引用编号/定位仍用传入 Hit 的 chunkId（child）——前端"看原文"抽屉按 child 展开。
+     */
+    public static Assembled assemble(List<VectorStore.Hit> hits, int maxSnippet, int budget) {
         StringBuilder sb = new StringBuilder();
         List<Cited> cites = new java.util.ArrayList<>();
         int used = 0;
         int no = 0;
         for (var h : hits) {
-            String snippet = h.content().length() > 700 ? h.content().substring(0, 700) + "…" : h.content();
+            String snippet = h.content().length() > maxSnippet ? h.content().substring(0, maxSnippet) + "…" : h.content();
             int add = snippet.length() + 40;
-            if (used + add > CONTEXT_CHAR_BUDGET && !cites.isEmpty()) break;
+            if (used + add > budget && !cites.isEmpty()) break;
             no++;
             cites.add(new Cited(no, h.chunkId(), h.docId(), snippet, h.score()));
             sb.append('[').append(no).append("] ").append(snippet).append("\n\n");
