@@ -30,6 +30,9 @@ public interface VectorStore {
     /** 按文档批量物理删除（文档删除/重向量化时联动）。 */
     void deleteByDocIds(Collection<Long> docIds);
 
+    /** M9.4：单切片下线（人工禁用）。实现按 chunk_id 索引删。 */
+    void deleteByChunkIds(Collection<Long> chunkIds);
+
     /** 按知识库批量物理删除（重建索引/跨存储迁移演练用，M6）。 */
     void deleteByKbIds(Collection<Long> kbIds);
 

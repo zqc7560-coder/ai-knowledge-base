@@ -29,5 +29,7 @@
 
     private String vectorId;
 
+    private Integer disabled;   // M9.4 人工禁用位（V7）
+
     private java.time.LocalDateTime createdAt;
     }

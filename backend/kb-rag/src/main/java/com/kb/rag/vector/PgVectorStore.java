@@ -76,8 +76,12 @@ public class PgVectorStore implements VectorStore {
         List<float[]> vecs = ai.embed(texts);
         if (vecs.size() != rows.size())
             throw new IllegalStateException("embedding 数量与切片不一致: " + vecs.size() + " vs " + rows.size());
+        // content 一并更新（M9.4 修复）：编辑切片文本后 upsert，若只更新 embedding，
+        // search 回读的 content 仍是旧文本——答案就答不出新内容（专项实测复现过）。
         String sql = "INSERT INTO kb_vectors (chunk_id, kb_id, doc_id, content, embedding) "
-                + "VALUES (?,?,?,?,?::vector) ON CONFLICT (chunk_id) DO UPDATE SET embedding = EXCLUDED.embedding";
+                + "VALUES (?,?,?,?,?::vector) ON CONFLICT (chunk_id) "
+                + "DO UPDATE SET embedding = EXCLUDED.embedding, content = EXCLUDED.content, "
+                + "kb_id = EXCLUDED.kb_id, doc_id = EXCLUDED.doc_id";
         try (Connection c = ds.getConnection(); PreparedStatement ps = c.prepareStatement(sql)) {
             for (int i = 0; i < rows.size(); i++) {
                 ChunkRow r = rows.get(i);
@@ -96,7 +100,13 @@ public class PgVectorStore implements VectorStore {
         }
     }
 
-    
+    @Override
+    public void deleteByChunkIds(Collection<Long> chunkIds) {
+        if (chunkIds == null || chunkIds.isEmpty()) return;
+        String ph = String.join(",", chunkIds.stream().map(x -> "?").toList());
+        pg.update("DELETE FROM kb_vectors WHERE chunk_id IN (" + ph + ")", chunkIds.toArray());
+    }
+
     @Override
     public void deleteByDocIds(Collection<Long> docIds) {
         if (docIds.isEmpty()) return;

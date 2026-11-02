@@ -34,15 +34,17 @@
         </template>
       </el-table-column>
       <el-table-column prop="chunkCount" label="切片" width="70" />
-      <el-table-column label="操作" width="120">
+      <el-table-column label="操作" width="180">
         <template #default="{ row }">
           <el-button v-if="row.status === 'FAILED'" size="small" @click="retry(row.id)">重试</el-button>
+          <el-button size="small" plain @click="openChunks(row)">切片</el-button>
           <el-popconfirm title="删除文档及其向量？" @confirm="del(row.id)">
             <template #reference><el-button size="small" type="danger" text>删除</el-button></template>
           </el-popconfirm>
         </template>
       </el-table-column>
     </el-table>
+    <ChunkDrawer v-model="chunkShow" :doc-id="chunkDoc?.id" :doc-name="chunkDoc?.filename" />
   </div>
 </template>
 
@@ -52,6 +54,7 @@ import { useRoute } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { UploadFilled } from "@element-plus/icons-vue";
 import { http } from "../api/http";
+import ChunkDrawer from "../components/ChunkDrawer.vue";
 
 const route = useRoute();
 const kbId = route.params.id as string;
@@ -73,6 +76,10 @@ let timer: number | undefined;
 const fmtSize = (n: number) => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : (n / 1024).toFixed(0) + " KB";
 const statusType = (s: string) =>
   (s === "READY" ? "success" : s === "FAILED" ? "danger" : s === "UPLOADED" ? "info" : "warning") as never;
+
+const chunkShow = ref(false);
+const chunkDoc = ref<any>(null);
+function openChunks(row: any) { chunkDoc.value = row; chunkShow.value = true; }
 
 const reindexing = ref(false);
 const reTask = ref("");
@@ -128,10 +135,23 @@ async function onFile(uf: { raw?: File }) {
   if (!uf.raw) return;
   const fd = new FormData();
   fd.append("file", uf.raw);
+  // M9.3：同名文件已存在→询问"替换旧版"（新版本入库+旧版软删下线）还是照旧并存
+  const sameName = docs.value.find(d => d.filename === uf.raw!.name);
+  if (sameName) {
+    try {
+      await ElMessageBox.confirm(
+        `已存在同名文件《${sameName.filename}》（v${sameName.id}）。替换将以本次上传为新版本并下线旧版；选"并存"则保留两份。`,
+        "同名文件", { confirmButtonText: "替换旧版", cancelButtonText: "并存", distinguishCancelAndClose: true, type: "warning" });
+      fd.append("replace", "true");
+    } catch (e: any) {
+      if (e === "close") return; // 关闭弹窗=放弃上传
+    }
+  }
   try {
     const created = await http.post(`/kb/${kbId}/documents`, fd, { headers: { "Content-Type": "multipart/form-data" } });
-    ElMessage.success("已提交处理");
+    ElMessage.success(sameName ? "已按新版本替换并处理中" : "已提交处理");
     docs.value.unshift(created as unknown as DocRow);
+    if (sameName) docs.value = docs.value.filter(d => d.id !== sameName.id);
     pollBusy();
   } catch { /* toast */ }
 }

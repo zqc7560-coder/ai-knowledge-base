@@ -39,6 +39,7 @@ public class VectorStoreRouter implements VectorStore {
     @Override public int upsert(List<ChunkRow> rows) { return active.upsert(rows); }
     @Override public void deleteByDocIds(Collection<Long> ids) { active.deleteByDocIds(ids); }
     @Override public void deleteByKbIds(Collection<Long> ids) { active.deleteByKbIds(ids); }
+    @Override public void deleteByChunkIds(Collection<Long> ids) { active.deleteByChunkIds(ids); }
     @Override public List<Hit> search(String q, Collection<Long> ids, int topK, double min) { return active.search(q, ids, topK, min); }
     @Override public long countByKb(Long id) { return active.countByKb(id); }
     @Override public String name() { return active.name(); }

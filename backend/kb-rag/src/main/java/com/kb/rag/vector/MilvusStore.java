@@ -80,14 +80,22 @@ public class MilvusStore implements VectorStore {
 
     @Override
     public void deleteByDocIds(Collection<Long> docIds) {
-        if (docIds.isEmpty()) return;
+        if (docIds == null || docIds.isEmpty()) return;
         ensureCollection();
-        String in = docIds.stream().map(String::valueOf).reduce("", (a, b) -> a.isEmpty() ? b : a + "," + b);
+        String in = docIds.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("");
         post("/v2/vectordb/entities/delete",
                 Map.of("collectionName", COLLECTION, "filter", "doc_id in [" + in + "]"));
     }
 
     @Override
+    public void deleteByChunkIds(Collection<Long> chunkIds) {
+        if (chunkIds == null || chunkIds.isEmpty()) return;
+        ensureCollection();
+        String in = chunkIds.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("");
+        post("/v2/vectordb/entities/delete",
+                Map.of("collectionName", COLLECTION, "filter", "id in [" + in + "]"));
+    }
+
     public void deleteByKbIds(Collection<Long> kbIds) {
         if (kbIds.isEmpty()) return;
         ensureCollection();

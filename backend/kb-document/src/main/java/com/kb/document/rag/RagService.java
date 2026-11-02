@@ -289,7 +289,7 @@ public class RagService {
         // document_chunks 无软删列：块与向量随文档删除物理清（DocumentService.delete），表里都是活数据。
         return mysql.query(
                 "SELECT id, doc_id, kb_id, content FROM document_chunks " +
-                "WHERE kb_id IN (" + in + ") " +
+                "WHERE disabled = 0 AND kb_id IN (" + in + ") " +
                 "  AND MATCH(content) AGAINST (? IN NATURAL LANGUAGE MODE) > 0 " +
                 "ORDER BY MATCH(content) AGAINST (? IN NATURAL LANGUAGE MODE) DESC LIMIT " + limit,
                 (rs, i) -> {
@@ -458,6 +458,7 @@ public class RagService {
             for (int s = lo; s <= hi; s++) seen.add(s);
             var sib = chunkMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<DocumentChunk>()
                     .eq(DocumentChunk::getDocId, h.docId())
+                    .eq(DocumentChunk::getDisabled, 0)
                     .between(DocumentChunk::getSeqNo, lo, hi)
                     .orderByAsc(DocumentChunk::getSeqNo));
             String merged = sib.stream().map(DocumentChunk::getContent)

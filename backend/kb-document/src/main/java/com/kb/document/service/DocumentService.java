@@ -77,7 +77,9 @@ public class DocumentService {
         }
     }
 
-    public Document upload(User me, Long kbId, MultipartFile file) {
+    public Document upload(User me, Long kbId, MultipartFile file) { return upload(me, kbId, file, false); }
+
+    public Document upload(User me, Long kbId, MultipartFile file, boolean replaceByName) {
         KnowledgeBase kb = access.require(kbId, me, KbAccessService.Perm.EDIT);
         if (file.isEmpty()) throw BizException.of(BizCode.FILE_TYPE_NOT_ALLOWED, "空文件");
         String filename = Path.of(file.getOriginalFilename() == null ? "noname" : file.getOriginalFilename())
@@ -96,6 +98,21 @@ public class DocumentService {
 
         String ext = FileValidator.validate(filename, file.getSize(), target);
         String sha = sha256(target);
+
+        // M9.3 同名重传=版本替换：先下线同名旧版（软删行+清 chunk+清向量+删旧文件），
+        // 再走正常入库。秒传去重在其后——同内容重传仍命中去重(等价空操作，不误删自己)。
+        if (replaceByName) {
+            Document sameName = docs.selectOne(new LambdaQueryWrapper<Document>()
+                    .eq(Document::getKbId, kb.getId()).eq(Document::getFilename, filename)
+                    .ne(Document::getSha256, sha).last("limit 1"));
+            if (sameName != null) {
+                vectorStore.deleteByDocIds(List.of(sameName.getId()));
+                chunks.delete(new LambdaQueryWrapper<DocumentChunk>().eq(DocumentChunk::getDocId, sameName.getId()));
+                docs.deleteById(sameName.getId()); // @TableLogic 软删
+                try { Files.deleteIfExists(Path.of(sameName.getFilePath())); } catch (IOException ignore) {}
+                log.info("version-replace: doc {} superseded by new upload kb={}", sameName.getId(), kb.getId());
+            }
+        }
         // 秒传去重：同库同 hash 的未删除文档
         Document dup = docs.selectOne(new LambdaQueryWrapper<Document>()
                 .eq(Document::getKbId, kb.getId()).eq(Document::getSha256, sha)

@@ -21,13 +21,12 @@ def judge_batch(items):
                        "temperature": 0}).encode()
     req = urllib.request.Request(URL, data=body, method="POST",
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + KEY})
-    import os
+    # 强制直连：本机 FlClash 系统代理对 Python urllib 不稳定(TLS reset)，
+    # 而 DashScope 直连实测可达（curl --noproxy 已验）。ProxyHandler({}) 绕过继承的系统代理。
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     for i in range(6):
         try:
-            # 直连抖动(TLS reset)时兜底走本地 7890 代理——与运维现状一致
-            if i >= 2 and not os.environ.get("http_proxy"):
-                os.environ["http_proxy"] = os.environ["https_proxy"] = "http://127.0.0.1:7890"
-            with urllib.request.urlopen(req, timeout=120) as r:
+            with opener.open(req, timeout=120) as r:
                 out = json.loads(r.read())["choices"][0]["message"]["content"]
             m = re.search(r"\[[^\[\]]*\]", out, re.S)
             arr = json.loads(m.group(0))
