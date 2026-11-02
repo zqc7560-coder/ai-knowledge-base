@@ -16,14 +16,19 @@ const PATTERNS = [
   new RegExp("Bearer" + "\\s+(?=[A-Za-z0-9._-]*[0-9])[A-Za-z0-9._-]{19,}"),
   new RegExp("MEU" + "CIQ|PRIVATE" + " KEY-----"),
 ];
-const SKIP_EXT = [".png", ".jpg", ".gif", ".ico", ".woff", ".ttf", ".pdf", ".zip", ".jar", ".exe"];
+const SKIP_EXT = [".png", ".jpg", ".gif", ".ico", ".woff", ".ttf", ".pdf", ".zip", ".jar", ".exe",
+  ".key", ".crt", ".p12", ".pfx"]; // 本地证书/私钥：.gitignore 已挡入库（L2/L8），扫描器跳过文件系统噪音
+const SKIP_DIRS = [".git", "node_modules", "target", "dist", "logs", "certs", "data", "uploads", "__pycache__"];
 const hits = [];
 (function walk(dir) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (ALLOW.has(p)) continue;
     let st; try { st = statSync(p); } catch { continue; }
-    if (st.isDirectory()) { if (name !== ".git" && name !== "node_modules" && !p.endsWith(".env")) walk(p); continue; }
+    if (st.isDirectory()) {
+      if (!SKIP_DIRS.includes(name) && !p.endsWith(".env")) walk(p);
+      continue;
+    }
     if (SKIP_EXT.some(e => name.endsWith(e))) continue;
     if (name === ".env" || name === ".env.local") { // 未提交的本地 env 跳过（仅当在 ROOT 白名单外才报）
       continue;

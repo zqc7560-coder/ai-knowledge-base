@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 容器构建专用 Maven 配置：与宿主已验证可用的镜像端点保持一致。
+     教训：https://maven.aliyun.com/repository/public 在 Docker Desktop(WSL2) 网络里 TLS 握手被掐
+     （"Remote host terminated the handshake"），而 http://nexus 端点畅通——Maven 的 http-blocker
+     只挡【仓库声明的 http URL】，不挡【mirror 定义的 http URL】，故此写法安全可行。
+     cache mount 只挂 repository 子目录，本文件在挂载点之外，不会被遮蔽。 -->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <mirrors>
+    <mirror>
+      <id>alimaven</id>
+      <mirrorOf>central</mirrorOf>
+      <name>Aliyun Nexus Mirror</name>
+      <url>http://maven.aliyun.com/nexus/content/groups/public</url>
+    </mirror>
+  </mirrors>
+</settings>

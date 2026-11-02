@@ -215,31 +215,39 @@ public class AiClientFactory {
     // ---------- infra ----------
 
     private String post(String url, String jsonBody, Duration timeout) {
-        try {
-            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(timeout)
-                    .header("Authorization", "Bearer " + apiKey)
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                    .build();
-            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
-            int sc = resp.statusCode();
-            if (sc == 429) throw new AiUpstreamException("AI_UPSTREAM_BUSY", true, null);
-            if (sc >= 400) {
-                // 上游报文可能含请求头回声，一律不落日志（L6）
-                log.warn("upstream {} status={}", shortPath(url), sc);
-                throw new AiUpstreamException("AI 服务暂时不可用(" + sc + ")", false, null);
+        // 连接级重试：本部署环境（Docker Desktop/WSL2 NAT）对外 HTTPS 间歇性 RST——
+        // ConnectException 意味着请求尚未发出，重试无重复计费风险；429 交由上层退避。
+        Exception last = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                return doPost(url, jsonBody, timeout);
+            } catch (AiUpstreamException biz) {
+                throw biz;                      // 上游明确响应（429/4xx/5xx）不重连重试，语义交上层
+            } catch (Exception io) {            // 仅连接/IO 层异常重试
+                last = io;
+                if (attempt < 3) sleepBackoff(attempt);
             }
-            return resp.body();
-        } catch (AiUpstreamException e) {
-            throw e;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new AiUpstreamException("AI 调用被中断", false, e);
-        } catch (Exception e) {
-            log.warn("upstream {} io-fail {}", shortPath(url), e.getClass().getSimpleName());
-            throw new AiUpstreamException("AI 网络异常", false, e);
         }
+        log.warn("upstream {} io-fail after 3 tries: {}", shortPath(url), last == null ? "?" : last.getClass().getSimpleName());
+        throw new AiUpstreamException("AI 网络异常", false, last);
+    }
+
+    private String doPost(String url, String jsonBody, Duration timeout) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .timeout(timeout)
+                .header("Authorization", "Bearer " + apiKey)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .build();
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+        int sc = resp.statusCode();
+        if (sc == 429) throw new AiUpstreamException("AI_UPSTREAM_BUSY", true, null);
+        if (sc >= 400) {
+            // 上游报文可能含请求头回声，一律不落日志（L6）
+            log.warn("upstream {} status={}", shortPath(url), sc);
+            throw new AiUpstreamException("AI 服务暂时不可用(" + sc + ")", false, null);
+        }
+        return resp.body();
     }
 
     /** 只留路径尾段，保证 host/带参 URL 不进日志。 */

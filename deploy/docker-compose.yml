@@ -47,16 +47,31 @@ services:
   backend:
     profiles: ["app"]
     build:
-      context: ../backend
+      # context=仓库根：Dockerfile 需同时取 backend/ 源码与 deploy/maven-settings.xml
+      context: ..
+      dockerfile: backend/Dockerfile
+      additional_contexts:
+        # 宿主本地 Maven 仓库作为离线依赖种子（容器网络够不着国内镜像源的现实约束；
+        # CI/正常网络机器可把下面两行删掉改在线拉取）
+        m2seed: "E:/develop/apache-maven-3.9.4/mvn_repo"
     container_name: kb-backend
     environment:
       # 密钥红线 L8：compose 只引用变量名；值来自 deploy/.env（本地）或 CI masked env（生产）
       AI_API_KEY: ${AI_API_KEY}
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
+      MYSQL_DB: ${MYSQL_DB:-kb_system}
+      MYSQL_USER: ${MYSQL_USER:-kb_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       REDIS_HOST: redis
+      REDIS_PORT: 6379
       PGVECTOR_HOST: pgvector
       PGVECTOR_PORT: 5432
+      PGVECTOR_DB: ${PGVECTOR_DB:-kb_vectors}
+      PGVECTOR_USER: ${PGVECTOR_USER:-kb_app}
+      PGVECTOR_PASSWORD: ${PGVECTOR_PASSWORD}
+      KB_ADMIN_USERNAME: ${KB_ADMIN_USERNAME:-}
+      KB_ADMIN_PASSWORD: ${KB_ADMIN_PASSWORD:-}
       UPLOAD_DIR: /app/data/uploads
     volumes:
       - kb-uploads:/app/data/uploads
@@ -69,7 +84,8 @@ services:
   frontend:
     profiles: ["app"]
     build:
-      context: ../frontend
+      context: ..
+      dockerfile: frontend/Dockerfile
     container_name: kb-frontend
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro

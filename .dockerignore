@@ -1,0 +1,23 @@
+# 仓库根构建上下文用（backend/frontend Dockerfile 的 context=仓库根）。
+# 第一红线：任何 .env 与本地密钥文件不得进入镜像层（L2/L8）。
+.env
+**/.env
+**/.env.local
+backend/.env
+deploy/.env
+deploy/secrets/
+
+.git
+.idea
+.vscode
+logs/
+data/
+uploads/
+backend/**/target/
+frontend/node_modules/
+# 注意：frontend/dist 不能被排除——frontend/Dockerfile 正是 COPY dist 进 nginx（宿主先跑 npm build 过密钥门禁再打镜像）
+frontend/tsconfig.tsbuildinfo
+docs/
+sql/
+*.md
+!backend/**/*.md

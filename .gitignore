@@ -32,3 +32,5 @@ nul:
 nul
 **/nul
 tsconfig.tsbuildinfo
+
+deploy/certs/
