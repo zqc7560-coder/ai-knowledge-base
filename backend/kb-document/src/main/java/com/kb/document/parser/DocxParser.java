@@ -36,7 +36,12 @@ public class DocxParser implements DocumentParser {
                 String titlePath = titlePath(stack);
                 out.getSections().add(new ParsedDoc.Section(text, null, titlePath));
             }
-            if (out.getSections().isEmpty())
+            // M9.2：内嵌图片进 OCR 队列（>=50KB 才值得；页码未知记 0）
+            for (var pic : doc.getAllPictures()) {
+                byte[] data = pic.getData();
+                if (data != null && data.length >= 51200) out.addImage(0, data);
+            }
+            if (out.getSections().isEmpty() && out.getImages().isEmpty())
                 throw new ParserException("DOCX 无文本内容");
         } catch (ParserException pe) {
             throw pe;

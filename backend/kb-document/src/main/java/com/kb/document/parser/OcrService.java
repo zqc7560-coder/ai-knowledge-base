@@ -50,6 +50,30 @@ public class OcrService {
      * 对 needsOcr 的 PDF 执行逐页识别。返回补齐 sections 的 ParsedDoc。
      * 失败（超限/上游连续异常）抛 ParserException，由管道记 FAILED+原因。
      */
+    /**
+     * M9.2：文档内嵌图片批量识别，结果以 Section（titlePath=图内文字）追加。
+     * 护栏：单文档最多 imageMax 张；识别失败单张跳过（正文已可用，不因图打断管道）；
+     * 视觉开关关闭时静默跳过（与扫描版"必须出结果否则 FAILED"不同——图 OCR 是增益不是兜底）。
+     */
+    public void ocrImages(ParsedDoc doc, int imageMax) {
+        if (!enabled || doc.getImages().isEmpty()) return;
+        int done = 0;
+        for (var img : doc.getImages()) {
+            if (done >= imageMax) { log.info("image ocr capped at {}", imageMax); break; }
+            try {
+                String text = ai.visionOcr(img.bytes, INSTRUCTION).text();
+                if (text != null && !text.isBlank()) {
+                    for (String block : PdfParser.splitBlocks(text))
+                        doc.getSections().add(new ParsedDoc.Section("[图内文字] " + block,
+                                img.pageNo == 0 ? null : img.pageNo, "图内文字"));
+                    done++;
+                }
+            } catch (Exception e) {
+                log.warn("image ocr skipped: {}", e.getClass().getSimpleName());
+            }
+        }
+    }
+
     public ParsedDoc ocr(Path file, ParsedDoc probe) throws ParserException {
         int pages = probe.getPageCount();
         if (!enabled) throw new ParserException("未提取到文本：疑似扫描版 PDF（共 " + pages + " 页），且服务端 OCR 开关关闭");

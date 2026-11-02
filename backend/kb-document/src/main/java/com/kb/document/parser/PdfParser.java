@@ -1,7 +1,10 @@
 package com.kb.document.parser;
 
 import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDResources;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.stereotype.Component;
 
@@ -41,6 +44,24 @@ public class PdfParser implements DocumentParser {
                 String text = s.getText(doc);
                 for (String block : splitBlocks(text)) {
                     out.getSections().add(new ParsedDoc.Section(block, p, null));
+                }
+            }
+            // M9.2：文字版 PDF 的内嵌图（>=50KB，每页资源表遍历，上限由管道侧 imageMax 控制）
+            if (!out.isNeedsOcr()) {
+                for (int p = 1; p <= pages && out.getImages().size() <= 40; p++) {
+                    PDResources res = doc.getPage(p - 1).getResources();
+                    if (res == null) continue;
+                    for (COSName name : res.getXObjectNames()) {
+                        try {
+                            var xo = res.getXObject(name);
+                            if (xo instanceof PDImageXObject img) {
+                                ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                                javax.imageio.ImageIO.write(img.getImage(), "png", bo);
+                                byte[] png = bo.toByteArray();
+                                if (png.length >= 51200) out.addImage(p, png);
+                            }
+                        } catch (Exception ignoreImg) { /* 单图坏不毁全文 */ }
+                    }
                 }
             }
             if (out.getSections().isEmpty()) {

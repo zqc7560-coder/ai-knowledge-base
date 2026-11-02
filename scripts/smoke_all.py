@@ -227,6 +227,28 @@ for _ in range(60):
     time.sleep(2)
 step("M9.1 pptx+xlsx READY", _sts and all(s == "READY" for s in _sts), str(_sts))
 
+# ---------- M9.2 内嵌图片 OCR ----------
+_fp = pathlib.Path(__file__).resolve().parent.parent / "samples" / "楼层安全须知(内嵌图).docx"
+_r = upload(f"/kb/{kb_id}/documents", "safe.docx", _fp.read_bytes(), tok)
+step("M9.2 docx(with image) accepted", _r.get("code") == 0)
+_did = (_r.get("data") or {}).get("id")
+for _ in range(90):
+    _s = js(f"/documents/{_did}/status", token=tok).get("data") or {}
+    if _s.get("status") in ("READY", "FAILED"): break
+    time.sleep(2)
+step("M9.2 docx READY (image ocr in pipeline)", _s.get("status") == "READY")
+_c2 = (js("/chat/conversations", {"kbIds": [kb_id], "title": "m92smoke"}, tok).get("data") or {}).get("id")
+_req2 = urllib.request.Request(BASE + "/chat/ask",
+    data=json.dumps({"conversationId": _c2, "question": "紧急集合点在哪里？"}).encode(), method="POST",
+    headers={"Content-Type": "application/json", "Authorization": tok, "Accept": "text/event-stream"})
+_a2, _nm = "", ""
+with urllib.request.urlopen(_req2, timeout=180) as _resp:
+    for _rl in _resp:
+        _line = _rl.decode().strip()
+        if _line.startswith("event:"): _nm = _line[6:].strip()
+        elif _line.startswith("data:") and _nm == "delta": _a2 += _line[5:].strip().strip('"')
+step("M9.2 image-only fact answerable", "南门" in _a2, _a2[:50])
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

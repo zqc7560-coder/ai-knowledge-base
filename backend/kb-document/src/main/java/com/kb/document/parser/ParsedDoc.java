@@ -33,6 +33,17 @@ public class ParsedDoc {
         public String getTitlePath() { return titlePath; }
     }
 
+    /** 文档内嵌图片（M9.2）：解析器只收集，是否花 OCR 成本由管道决策（needsOcr 同构思路）。 */
+    public static class ImageRef {
+        public final int pageNo;
+        public final byte[] bytes;
+        public ImageRef(int pageNo, byte[] bytes) { this.pageNo = pageNo; this.bytes = bytes; }
+    }
+    private List<ImageRef> images = new java.util.ArrayList<>();
+
+    public List<ImageRef> getImages() { return images; }
+    public void addImage(int pageNo, byte[] bytes) { images.add(new ImageRef(pageNo, bytes)); }
+
     public List<Section> getSections() { return sections; }
     public void setSections(List<Section> sections) { this.sections = sections; }
     public boolean isNeedsOcr() { return needsOcr; }

@@ -36,6 +36,23 @@ BUILTIN_QA = [
     ("安装门锁要求的门厚范围", "35"), ("低电量时门锁会怎样提示", "语音"),
 ]
 
+
+def judge_ans(ev, anorm):
+    """ANS 判定(M8.4 口径)：① 证据中数字/专名 token 须全部出现在答案；
+    ② 证据整句与答案的字符 bigram 覆盖率 ≥0.45——措辞可精简但不能缺要点。
+    判定纯离线（基于保存的 raw 答案），不重复烧配额。"""
+    toks = re.findall(r"[A-Za-z0-9][A-Za-z0-9.\-\u00b7/]{1,}|\d+(?:[.,-]\d+)?(?:年|个月|天|次|元|人|台|种|倍|岁|小时|分钟|毫米|米|克|公斤|%|dBm)?", ev)
+    keytoks = [x for x in toks if re.search(r"\d|[A-Za-z]", x) and len(x) >= 2]
+    if keytoks and not all(k in anorm for k in keytoks[:4]):
+        return False
+    evb = re.sub(r"[\s*`>\"\u201c\u201d：:，,。]+", "", ev)
+    if not keytoks:  # 纯中文证据：bigram 覆盖是唯一判据
+        pass
+    bigs = {evb[i:i+2] for i in range(len(evb)-1)}
+    if not bigs: return evb in anorm
+    cov = sum(1 for bg in bigs if bg in anorm) / len(bigs)
+    return cov >= 0.45
+
 def load_cases():
     p = pathlib.Path(__file__).with_name("eval_v2.json")
     if not USE_BUILTIN and p.exists():
@@ -134,10 +151,8 @@ for i, c in enumerate(norm):
     # ANS 判定口径修正(M8.4)：evidence 是整句，模型复述措辞必不同——
     # 用"区分性 token"（数字/字母专名，如 32、V2.3.7、192.168.9、RESET）覆盖率判答案正确，
     # 要求 ≥1 个数字型 token 命中且无"未找到"式拒答。全句逐字匹配只适用于 R5（片段原文包含）。
-    toks = re.findall(r"[A-Za-z0-9][A-Za-z0-9.\-\u00b7/]{1,}|(?:\d+(?:[.,-]\d+)?(?:年|个月|天|次|元|人|台|种|倍|岁|小时|分钟|毫米|米|克|公斤|%|dBm)?)", c["ev"])
-    keytoks = [x for x in toks if re.search(r"\d|[A-Z]", x) and len(x) >= 2] or toks[:1]
-    anorm = answer.replace(" ", "")
-    ok = bool(keytoks) and all(k.replace(" ", "") in anorm for k in keytoks[:3])
+    anorm = re.sub(r"[\s*`>\"\u201c\u201d：:，,。]+", "", answer)
+    ok = judge_ans(c["ev"], anorm)
     recall5 += r5; ans_ok += ok
     raw_out.append({"q": c["q"], "ev": c["ev"], "r5": r5, "ok": ok,
                     "answer": answer[:400], "n_cites": len(cites)})

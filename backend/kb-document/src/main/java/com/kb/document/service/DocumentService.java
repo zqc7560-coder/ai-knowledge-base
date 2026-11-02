@@ -46,6 +46,8 @@ public class DocumentService {
     private final KbAccessService access;
     private final VectorStore vectorStore;
     private final com.kb.document.parser.OcrService ocrService;
+    @org.springframework.beans.factory.annotation.Value("${kb.doc.ocr.image-max:20}")
+    private int imageMax;   // M9.2 单文档内嵌图 OCR 张数上限
     private final org.springframework.data.redis.core.StringRedisTemplate redis;
     private final Map<String, DocumentParser> parsers = new HashMap<>();
     private final Path uploadRoot;
@@ -139,6 +141,9 @@ public class DocumentService {
             if (parsed.isNeedsOcr()) {
                 log.info("doc {} needs OCR ({} pages)", d.getId(), parsed.getPageCount());
                 parsed = ocrService.ocr(Path.of(d.getFilePath()), parsed);
+            } else if (!parsed.getImages().isEmpty()) {
+                // M9.2：文字版文档的内嵌图片也过一遍视觉模型（增益，非兜底——开关关/失败都静默跳过）
+                ocrService.ocrImages(parsed, imageMax);
             }
 
             moveTo(d, DocStatus.CHUNKED, null);
