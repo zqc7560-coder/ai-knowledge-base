@@ -4,7 +4,14 @@ import { useUserStore } from "../stores/user";
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/", name: "home", component: () => import("../views/HomeView.vue") },
+    {
+      path: "/",
+      component: () => import("../views/AppLayout.vue"),
+      children: [
+        { path: "", name: "home", component: () => import("../views/KbListView.vue") },
+        { path: "kb/:id/docs", name: "docs", component: () => import("../views/KbListView.vue") },
+      ],
+    },
     { path: "/login", name: "login", component: () => import("../views/LoginView.vue") },
   ],
 });

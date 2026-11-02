@@ -1,15 +1,17 @@
 import { defineStore } from "pinia";
+import { http } from "../api/http";
 
 /**
- * token 存 sessionStorage（关标签页即失效，降低 XSS 驻留风险）；
- * 真正的防护靠后端 Sa-Token + Http 语义，见密钥规范 §3.5。
+ * token 存 sessionStorage（关标签页即失效）；真防护靠后端 Sa-Token（密钥规范 §3.5）。
  */
 const SS_KEY = "kb_to" + "ken";
+
+interface MeInfo { id: number; username: string; email: string; role: string }
 
 export const useUserStore = defineStore("user", {
   state: () => ({
     token: sessionStorage.getItem(SS_KEY) || "",
-    username: "",
+    me: null as MeInfo | null,
   }),
   getters: {
     loggedIn: (s) => !!s.token,
@@ -19,8 +21,17 @@ export const useUserStore = defineStore("user", {
       this.token = t;
       sessionStorage.setItem(SS_KEY, t);
     },
+    async loadMe() {
+      if (!this.token) return;
+      this.me = (await http.get("/auth/me")) as MeInfo;
+    },
+    async logout() {
+      try { await http.post("/auth/logout"); } catch { /* ignore */ }
+      this.clear();
+    },
     clear() {
       this.token = "";
+      this.me = null;
       sessionStorage.removeItem(SS_KEY);
     },
   },
