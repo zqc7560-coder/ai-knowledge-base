@@ -23,9 +23,8 @@ AI API 密钥**只允许**存在于服务端环境变量中（本地开发放 `b
 cp .env.example backend/.env       # 填 AI_API_KEY 与各库口令；真实值绝不提交
 cd deploy && docker compose up -d  # mysql/redis/pgvector（基础设施）
 
-# 2A) 本地开发：后端裸跑（IDE 或脚本，热重启快）
-cd ../backend && ../scripts/redeploy.sh skip     # 打包+启动+健康检查 → :8080
-cd ../frontend && npm i && npm run dev           # :5173，代理 /api→:8080
+# 2A) 本地开发：双击 start\start-all.bat（基础设施+后端+前端一键全起，自动开浏览器）
+#     或分别双击 start\run-backend.bat / start\run-frontend.bat；停止用 start\stop-all.bat
 
 # 2B) 生产：全栈容器化
 cd frontend && npm run build                     # dist + 内嵌密钥扫描门禁

@@ -23,7 +23,7 @@ cp .env.example .env        # 若无此文件则手工创建，见下表键名
 ```bash
 cd deploy && docker compose up -d          # mysql/redis/pgvector
 cp ../.env.example ../backend/.env          # 填密钥与各端口(3307/6380/5433)
-cd ../backend && bash ../scripts/redeploy.sh skip   # 打包+启动+健康检查
+cd .. && start\build-backend.bat && start\run-backend.bat   # 构建+启动（或直接双击 start\start-all.bat）
 # 前端：cd frontend && npm run dev  （vite 代理 /api -> :8080）
 ```
 

@@ -34,3 +34,6 @@ nul
 tsconfig.tsbuildinfo
 
 deploy/certs/
+start/backup/
+logs/
+*.log
