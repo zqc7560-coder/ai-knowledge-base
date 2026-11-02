@@ -16,12 +16,26 @@ AI API 密钥**只允许**存在于服务端环境变量中（本地开发放 `b
 禁止写入前端代码、Dockerfile、compose 明文、git 历史、日志。提交前 pre-commit + gitleaks 会拦截。
 仓库初始化时请把 `.env.example` 复制为 `backend/.env` 并填入真实值（不要提交）。
 
-## 快速开始（M0 完成后适用）
+## 快速开始
+后端默认连 compose 映射的宿主高位端口（3307/6380/5433，已在 backend/.env 配好），与本机其他 MySQL 互不冲突。
 ```bash
-cp .env.example backend/.env      # 填 DB 与 AI_API_KEY
-cd deploy && docker compose up -d # mysql / redis / pgvector
-cd backend && ./mvnw spring-boot:run
-cd frontend && npm i && npm run dev
+# 1) 配置密钥（本地开发）
+cp .env.example backend/.env       # 填 AI_API_KEY 与各库口令；真实值绝不提交
+cd deploy && docker compose up -d  # mysql/redis/pgvector（基础设施）
+
+# 2A) 本地开发：后端裸跑（IDE 或脚本，热重启快）
+cd ../backend && ../scripts/redeploy.sh skip     # 打包+启动+健康检查 → :8080
+cd ../frontend && npm i && npm run dev           # :5173，代理 /api→:8080
+
+# 2B) 生产：全栈容器化
+cd frontend && npm run build                     # dist + 内嵌密钥扫描门禁
+cd deploy && docker compose --profile app up -d --build   # 全栈 → :8085(前端)
+# HTTPS: bash gen-selfsigned-cert.sh && docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile app --profile tls up -d → :8443
+
+# 3) 验证：全栈冒烟（覆盖 F1-F8 功能矩阵）
+python scripts/smoke_all.py                      # 打后端 :8080
+bash deploy/backup.sh ./backups                  # 备份三件套
+bash scripts/security-selfcheck.sh               # 密钥红线自查
 ```
 
 ## 目录结构
