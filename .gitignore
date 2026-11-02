@@ -37,3 +37,6 @@ deploy/certs/
 start/backup/
 logs/
 *.log
+
+__pycache__/
+*.pyc
