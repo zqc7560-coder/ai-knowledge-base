@@ -119,7 +119,10 @@ public class PgVectorStore {
         pg.update("DELETE FROM kb_vectors WHERE doc_id IN (" + in + ")");
     }
 
-    /** 向量 topK（按库过滤）。score = 内积（-1..1）。 */
+    /**
+     * 向量 topK（按库过滤）。score = 内积（-1..1）。
+     * 注意 {@code <#>} 运算符返回的是"负内积距离"，取负还原为相似度；HNSW 按距离升序即相似度降序。
+     */
     public List<Scored> search(String query, Collection<Long> kbIds, int topK, double minScore) {
         if (kbIds.isEmpty()) return List.of();
         float[] qv = ai.embed(List.of(query)).get(0);

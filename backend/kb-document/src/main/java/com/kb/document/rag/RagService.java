@@ -82,6 +82,16 @@ public class RagService {
     private final JdbcTemplate mysql;
     private final org.springframework.data.redis.core.StringRedisTemplate redis;
 
+    /**
+     * 检索模式开关（A/B 消融实验用，docs/02 4.2）：
+     *  hybrid=false 退化为纯向量召回；rerank=false 跳过精排直接用融合名次。
+     *  默认两者全开=生产配置。改配置重启即生效，不动代码。
+     */
+    @org.springframework.beans.factory.annotation.Value("${kb.rag.hybrid:true}")
+    private boolean hybridEnabled;
+    @org.springframework.beans.factory.annotation.Value("${kb.rag.rerank:true}")
+    private boolean rerankEnabled;
+
     public RagService(AiClientFactory ai, PgVectorStore vectors, ConversationService convs,
                       KbAccessService access, KnowledgeBaseMapper kbMapper, DocumentMapper docMapper,
                       DocumentChunkMapper chunkMapper, com.kb.domain.mapper.MessageMapper msgMapper,
@@ -115,8 +125,18 @@ public class RagService {
         // 1. 多轮指代改写（最近 5 条用户消息；当前问题不含代词时可跳过以省调用）
         String searchQuery = rewriteIfNeeded(conv, question);
 
-        // 2. 向量召回（放大 4 倍给 rerank 留空间）
-        List<PgVectorStore.Scored> recall = vectors.search(searchQuery, kbIds, Math.min(topK * 4, 20), 0.0);
+        // 2. 混合召回（M4）：向量通道 + MySQL ngram 全文通道，RRF 名次融合。
+        //    向量擅长语义近似但会漏"型号/专有名词"这类精确 token；全文正好互补。
+        //    放大 4 倍（上限20）召回是给下一步 cross-encoder 精排留候选池——初筛宽、精筛严。
+        int wideK = Math.min(topK * 4, 20);
+        List<PgVectorStore.Scored> vecHits = vectors.search(searchQuery, kbIds, wideK, 0.0);
+        List<PgVectorStore.Scored> recall;
+        if (hybridEnabled) {
+            List<DocumentChunk> kwHits = keywordRecall(searchQuery, kbIds, wideK);
+            recall = fuseChannels(vecHits, kwHits, wideK);
+        } else {
+            recall = vecHits; // 消融：纯向量
+        }
         if (recall.isEmpty()) {
             String refuse = RagPrompts.refuse();
             if (deltaSink != null) deltaSink.accept(refuse);
@@ -124,9 +144,13 @@ public class RagService {
             return new AskResult(refuse, List.of(), System.currentTimeMillis() - t0);
         }
 
-        // 3. rerank（失败降级：直接用向量分数前 topK）
+        // 3. rerank 精排（gte-rerank-v2 对候选重新打分取 topK）
+        //    失败降级用召回分数排序——可用性优先于精度；
+        //    消融开关 kb.rag.rerank=false 直接跳过精排，便于 A/B 对比精排贡献。
         List<PgVectorStore.Scored> ranked;
-        try {
+        if (!rerankEnabled) {
+            ranked = new ArrayList<>(recall.subList(0, Math.min(topK, recall.size())));
+        } else try {
             List<String> docs = recall.stream().map(PgVectorStore.Scored::content).toList();
             List<AiClientFactory.RerankItem> rr = ai.rerank(searchQuery, docs, topK);
             ranked = new ArrayList<>();
@@ -207,12 +231,56 @@ public class RagService {
         redis.opsForHash().increment("usage:" + java.time.LocalDate.now(), "u" + me.getId() + ":ask", 1);
     }
 
-    /** M4 关键词通道用（本阶段仅向量，留方法占位并真实查全文）。 */
+    /**
+     * 关键词召回通道：MySQL ngram 全文索引（document_chunks.ft_chunk，token=2）。
+     * BM25 分数不返回（pgvector 那边有相似度即可排序），这里只要"命中名次"喂给 RRF。
+     * query 侧做安全处理：截断长度 + 转义，防注入与超长查询拖垮 MATCH。
+     */
     List<DocumentChunk> keywordRecall(String query, List<Long> kbIds, int limit) {
+        if (kbIds.isEmpty()) return List.of();
+        String q = query.length() > 64 ? query.substring(0, 64) : query;
+        q = q.replace("'", "").replace("\"", "").replace("\\", "");
         String in = String.join(",", kbIds.stream().map(String::valueOf).toList());
-        // ngram 全文（MySQL 8）——RRF 融合 M4 接
-        return chunkMapper.selectList(new LambdaQueryWrapper<DocumentChunk>()
-                .in(DocumentChunk::getKbId, kbIds).last("limit " + limit));
+        // MATCH>0 过滤未命中行；分数降序即名次（分数无界但不进 RRF 值，只要名次）。
+        // document_chunks 无软删列：块与向量随文档删除物理清（DocumentService.delete），表里都是活数据。
+        return mysql.query(
+                "SELECT id, doc_id, kb_id, content FROM document_chunks " +
+                "WHERE kb_id IN (" + in + ") " +
+                "  AND MATCH(content) AGAINST (? IN NATURAL LANGUAGE MODE) > 0 " +
+                "ORDER BY MATCH(content) AGAINST (? IN NATURAL LANGUAGE MODE) DESC LIMIT " + limit,
+                (rs, i) -> {
+                    DocumentChunk d = new DocumentChunk();
+                    d.setId(rs.getLong("id"));
+                    d.setDocId(rs.getLong("doc_id"));
+                    d.setKbId(rs.getLong("kb_id"));
+                    d.setContent(rs.getString("content"));
+                    return d;
+                }, q, q);
+    }
+
+    /**
+     * 融合两通道结果：向量通道保 content/docId 映射，全文通道贡献名次。
+     * RRF 分数作为合成 score 向下传给 rerank 层（rerank 失败降级时用它排序）。
+     */
+    List<PgVectorStore.Scored> fuseChannels(List<PgVectorStore.Scored> vecHits,
+                                            List<DocumentChunk> kwHits, int limit) {
+        Map<Long, PgVectorStore.Scored> byChunk = new LinkedHashMap<>();
+        for (var v : vecHits) byChunk.put(v.chunkId(), v);
+        // 全文通道里向量没召回的块，从 MySQL 取原文补进候选池（content 非空才能进 prompt）
+        List<DocumentChunk> extras = kwHits.stream().filter(k -> !byChunk.containsKey(k.getId())).toList();
+        for (var e : extras) byChunk.put(e.getId(),
+                new PgVectorStore.Scored(e.getId(), e.getDocId(), e.getKbId(), e.getContent(), 0.0));
+        if (extras.isEmpty() || kwHits.isEmpty()) return vecHits;
+
+        List<Long> vecOrder = vecHits.stream().map(PgVectorStore.Scored::chunkId).toList();
+        List<Long> kwOrder = kwHits.stream().map(DocumentChunk::getId).toList();
+        List<RrfFusion.Fused> fused = RrfFusion.fuse(List.of(vecOrder, kwOrder), limit);
+        List<PgVectorStore.Scored> out = new ArrayList<>();
+        for (var f : fused) {
+            var s = byChunk.get(f.chunkId());
+            if (s != null) out.add(new PgVectorStore.Scored(s.chunkId(), s.docId(), s.kbId(), s.content(), f.score()));
+        }
+        return out;
     }
 
     public Map<String, Object> citationsDetail(User me, List<RagPrompts.Cited> cites) {

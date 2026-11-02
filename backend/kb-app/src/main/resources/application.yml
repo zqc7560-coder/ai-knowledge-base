@@ -49,6 +49,10 @@ kb:
     url: jdbc:postgresql://${PGVECTOR_HOST:localhost}:${PGVECTOR_PORT:5432}/${PGVECTOR_DB:kb_vectors}
     user: ${PGVECTOR_USER:kb_app}
     password: ${PGVECTOR_PASSWORD}
+  rag:
+    # 检索模式开关（A/B 消融，默认=生产配置：混合检索+精排全开）
+    hybrid: true
+    rerank: true
   doc:
     upload-dir: ${UPLOAD_DIR:./data/uploads}
     chunk-size: 500

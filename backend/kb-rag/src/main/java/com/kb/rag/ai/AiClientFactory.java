@@ -71,7 +71,19 @@ public class AiClientFactory {
     public String embeddingModel() { return embeddingModel; }
     public int embeddingDim() { return embeddingDim; }
 
-    /** chat 同步调用：返回 assistant 文本。异常统一转 AiUpstreamException（不透传上游报文）。 */
+    /**
+     * 同步 chat：非流式场景专用（查询改写、标题生成这类"要结果不要打字机"的调用）。
+     *
+     * <h3>为什么手写 HttpClient 而不用 langchain4j 的 ChatModel</h3>
+     * ① 密钥收敛：手写层让"全工程只有本类能拼 Authorization 头"这条红线可被静态审计
+     *    （grep Bearer 只命中 AiClientFactory 一处）；② 完全掌控超时/流式解析/重试节奏，
+     *    避免封装层吞掉 429 细节导致降级策略失真；③ 少一层运行时依赖，换上游模型商只改本文件。
+     *
+     * <h3>失败语义</h3>
+     * 所有异常统一包装成 AiUpstreamException（message 只含业务文案）——
+     * 上游 4xx/5xx 的原始 body 可能回显请求头（含 Bearer），绝不允许进日志或透出给前端，
+     * 这是密钥规范 L6"防回声"的实现点。
+     */
     public String chat(List<Map<String, String>> messages, Double temperature, Integer maxTokens) {
         Map<String, Object> body = new java.util.HashMap<>();
         body.put("model", chatModel);
