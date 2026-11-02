@@ -1,5 +1,6 @@
 package com.kb.document.web;
 
+import com.kb.common.api.BizCode;
 import com.kb.common.api.BizException;
 import com.kb.common.api.Result;
 import com.kb.domain.chat.ConversationService;
@@ -38,7 +39,9 @@ public class ChatController {
     public ChatController(RagService rag, ConversationService convs, AuthService auth,
                           com.kb.domain.mapper.DocumentChunkMapper chunkMapper,
                           com.kb.domain.mapper.DocumentMapper docMapper,
-                          com.kb.domain.kb.KbAccessService access) {
+                          com.kb.domain.kb.KbAccessService access,
+                          com.kb.domain.mapper.MessageMapper msgMapper) {
+        this.msgMapper = msgMapper;
         this.rag = rag;
         this.convs = convs;
         this.auth = auth;
@@ -102,10 +105,20 @@ public class ChatController {
             try {
                 RagService.AskResult res = rag.ask(me, req.conversationId(), req.question(),
                         d -> sendQuiet(emitter, "delta", d));
-                emitter.send(SseEmitter.event().name("citations")
-                        .data(rag.citationsDetail(me, res.citations()), MediaType.APPLICATION_JSON));
+                // M10 置信度：取本次引用最高 rerank/融合分；<0.30 提示前端"仅供参考"。
+                // 口径写在 docs/07（阈值是经验值，rerank 开/关时分数分布不同，属展示层辅助非硬判据）。
+                var det = rag.citationsDetail(me, res.citations());
+                emitter.send(SseEmitter.event().name("citations").data(det, MediaType.APPLICATION_JSON));
+                Object cs = det.get("citations");
+                double maxScore = 0;
+                if (cs instanceof java.util.List<?> l)
+                    for (Object o : l)
+                        if (o instanceof java.util.Map<?, ?> mm && mm.get("score") instanceof Number n)
+                            maxScore = Math.max(maxScore, n.doubleValue());
                 emitter.send(SseEmitter.event().name("done")
-                        .data(Map.of("elapsedMs", res.elapsedMs(), "chars", res.answer().length())));
+                        .data(Map.of("elapsedMs", res.elapsedMs(), "chars", res.answer().length(),
+                                "maxScore", Math.round(maxScore * 1000.0) / 1000.0,
+                                "lowConfidence", !res.citations().isEmpty() && maxScore < 0.30)));
                 emitter.complete();
             } catch (BizException | AiUpstreamException e) {
                 sendQuiet(emitter, "error", Map.of("code", e instanceof BizException b ? b.getCode() : 4001,
@@ -122,6 +135,25 @@ public class ChatController {
         emitter.onCompletion(() -> {});
         emitter.onTimeout(emitter::complete);
         return emitter;
+    }
+
+    /**
+     * 重新生成前置（M10）：删掉会话最后一条 assistant 消息并返回上一条 user 问题原文，
+     * 前端拿问题重新走 /ask。只删一条、必须紧邻尾部，防历史中段篡改（问答配对完整性）。
+     */
+    @PostMapping("/conversations/{convId}/regenerate")
+    public Result<Map<String, Object>> regenerate(@PathVariable Long convId) {
+        var me = auth.currentUser();
+        convs.loadOwned(me, convId);
+        var list = msgMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.kb.domain.entity.Message>()
+                .eq(com.kb.domain.entity.Message::getConversationId, convId)
+                .orderByDesc(com.kb.domain.entity.Message::getId).last("limit 2"));
+        if (list.isEmpty() || !"assistant".equals(list.get(0).getRole()))
+            throw BizException.of(BizCode.PARAM_INVALID, "尾部不是助手答案，无法重新生成");
+        msgMapper.deleteById(list.get(0).getId());
+        String lastUser = list.size() > 1 && "user".equals(list.get(1).getRole()) ? list.get(1).getContent() : null;
+        if (lastUser == null) throw BizException.of(BizCode.PARAM_INVALID, "找不到原始问题");
+        return Result.ok(Map.of("question", lastUser));
     }
 
     /** 历史引用回放：按 chunkIds 取原文与文档名（权限=对 chunk 所属库至少 ASK）。 */
@@ -154,6 +186,7 @@ public class ChatController {
     private final com.kb.domain.mapper.DocumentChunkMapper chunkMapper;
     private final com.kb.domain.mapper.DocumentMapper docMapper;
     private final com.kb.domain.kb.KbAccessService access;
+    private final com.kb.domain.mapper.MessageMapper msgMapper;
 
     /**
      * 引用上下文窗口：给定 chunkId，返回同文档相邻 ±around 个切片（按序），

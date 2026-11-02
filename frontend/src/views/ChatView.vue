@@ -35,6 +35,8 @@
                 <span v-if="m.model" class="ftime">{{ m.model }}</span>
                 <span class="fb" :class="{ on: m.feedback === 1 }" @click="feedback(m, m.feedback === 1 ? 0 : 1)">👍</span>
                 <span class="fb" :class="{ bad: m.feedback === -1 }" @click="feedback(m, m.feedback === -1 ? 0 : -1)">👎</span>
+                <el-tag v-if="m.lowConf" size="small" type="warning" effect="plain">相关度偏低，答案仅供参考</el-tag>
+                <el-button v-if="m === lastAnswer" size="small" text type="primary" :disabled="asking" @click="regenerate(m)">重新生成</el-button>
               </div>
               <div v-if="m.role === 'assistant' && m.citationList?.length" class="cites">
                 <el-divider content-position="left">引用来源</el-divider>
@@ -114,14 +116,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, onMounted, onUnmounted, nextTick, computed } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { http } from "../api/http";
 import { useUserStore } from "../stores/user";
 import { renderMd } from "../utils/md";
 
 interface Cite { no: number; chunkId: number; docId: number; docName: string; snippet: string; score: number | string; pageNo?: number }
-interface Msg { id?: number; role: string; content: string; citeChunkIds?: string; citationList?: Cite[];
+interface Msg { lowConf?: boolean;
+   id?: number; role: string; content: string; citeChunkIds?: string; citationList?: Cite[];
   elapsedMs?: number; model?: string; feedback?: number; createdAt?: string }
 
 const store = useUserStore();
@@ -147,6 +150,22 @@ const shShow = ref(false);
 const shUrl = ref("");
 const shareList = ref<any[]>([]);
 const origin = window.location.origin;
+const lastAnswer = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--)
+    if (messages.value[i].role === "assistant") return messages.value[i];
+  return null;
+});
+async function regenerate(m: any) {
+  if (!current.value || asking.value) return;
+  try {
+    // 服务端删除尾部 assistant+user 两行并回传问题原文；本地同删后重发
+    const r = (await http.post(`/chat/conversations/${current.value}/regenerate`)) as any;
+    const idx = messages.value.indexOf(m);
+    if (idx > 0 && messages.value[idx - 1].role === "user") messages.value.splice(idx - 1, 2);
+    else messages.value.splice(idx, 1);
+    await send(r.question);
+  } catch { /* toast */ }
+}
 
 async function reloadConvs() {
   convs.value = (await http.get("/chat/conversations")) as any[];
@@ -207,8 +226,8 @@ async function feedback(m: Msg, v: number) {
 }
 
 /** 原生 fetch 读 SSE（axios 不便处理流）。 */
-async function send() {
-  const text = q.value.trim();
+async function send(preset?: string) {
+  const text = (preset ?? q.value).trim();
   if (!text || !current.value || asking.value) return;
   asking.value = true;
   q.value = "";
@@ -244,9 +263,10 @@ async function send() {
             holder.content = holder.content || "⚠ " + j.message;
             ElMessage.error(j.message);
           } else if (evName === "done") {
-            // done 事件回 elapsedMs；消息 id 由刷新历史获得（评价功能对当轮新消息提示刷新）
+            // done 事件回 elapsedMs + 置信度（M10）；消息 id 由刷新历史获得（评价功能对当轮新消息提示刷新）
             const j = JSON.parse(payload);
             holder.elapsedMs = j.elapsedMs;
+            holder.lowConf = !!j.lowConfidence;
           }
         }
       }
