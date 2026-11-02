@@ -1,0 +1,25 @@
+# ---- secrets：永远不进 git ----
+.env
+*.env.local
+backend/.env
+deploy/secrets/
+*.pem
+*.key
+
+# ---- java / maven ----
+backend/**/target/
+*.class
+.mvn/wrapper/maven-wrapper.jar
+
+# ---- node / vite ----
+frontend/node_modules/
+frontend/dist/
+*.local
+
+# ---- 杂项 ----
+.idea/
+.vscode/
+*.log
+uploads/
+.DS_Store
+Thumbs.db
