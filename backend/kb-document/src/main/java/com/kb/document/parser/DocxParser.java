@@ -2,6 +2,7 @@ package com.kb.document.parser;
 
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFTableCell;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
@@ -25,16 +26,23 @@ public class DocxParser implements DocumentParser {
         out.setSections(new ArrayList<>());
         try (InputStream in = Files.newInputStream(file); XWPFDocument doc = new XWPFDocument(in)) {
             String[] stack = new String[4]; // levels 1..3
-            for (XWPFParagraph p : doc.getParagraphs()) {
-                String text = p.getText() == null ? "" : p.getText().trim();
-                if (text.isEmpty()) continue;
-                int level = headingLevel(p);
-                if (level > 0) {
-                    stack[level] = text;
-                    for (int i = level + 1; i <= 3; i++) stack[i] = null;
+            // M9.5：改遍历 BodyElements——段落与表格按文档顺序交错。
+            // 旧实现只读 getParagraphs()，表格内容整张丢弃（实测发现的真实缺陷，docs/07 记录）。
+            for (var el : doc.getBodyElements()) {
+                if (el instanceof XWPFParagraph p) {
+                    String text = p.getText() == null ? "" : p.getText().trim();
+                    if (text.isEmpty()) continue;
+                    int level = headingLevel(p);
+                    if (level > 0) {
+                        stack[level] = text;
+                        for (int i = level + 1; i <= 3; i++) stack[i] = null;
+                    }
+                    out.getSections().add(new ParsedDoc.Section(text, null, titlePath(stack)));
+                } else if (el instanceof org.apache.poi.xwpf.usermodel.XWPFTable tb) {
+                    String md = tableToMarkdown(tb);
+                    if (!md.isBlank())
+                        out.getSections().add(new ParsedDoc.Section(md, null, titlePath(stack)));
                 }
-                String titlePath = titlePath(stack);
-                out.getSections().add(new ParsedDoc.Section(text, null, titlePath));
             }
             // M9.2：内嵌图片进 OCR 队列（>=50KB 才值得；页码未知记 0）
             for (var pic : doc.getAllPictures()) {
@@ -72,4 +80,29 @@ public class DocxParser implements DocumentParser {
         for (int i = 1; i <= 3; i++) if (stack[i] != null) parts.add(stack[i]);
         return parts.isEmpty() ? null : String.join(" > ", parts);
     }
+
+    /** DOCX 表格 → Markdown 表（首行当表头；单元格内换行折成空格，防破坏 md 表结构）。 */
+    static String tableToMarkdown(org.apache.poi.xwpf.usermodel.XWPFTable tb) {
+        StringBuilder sb = new StringBuilder();
+        var rows = tb.getRows();
+        if (rows.isEmpty()) return "";
+        final String NL = chr(10);
+        for (int r = 0; r < rows.size(); r++) {
+            List<String> cells = new ArrayList<>();
+            for (XWPFTableCell c : rows.get(r).getTableCells())
+                cells.add(c.getText().replaceAll(WS_ONE, " ").trim().replace("|", "/"));
+            if (cells.stream().allMatch(String::isEmpty)) continue;
+            sb.append("| ").append(String.join(" | ", cells)).append(" |").append(NL);
+            if (r == 0) {
+                StringBuilder sep = new StringBuilder("|");
+                for (int x = 0; x < cells.size(); x++) sep.append(" --- |");
+                sb.append(sep).append(NL);
+            }
+        }
+        String md = sb.toString().trim();
+        return md.isEmpty() ? "" : "【表格】" + NL + md;
+    }
+
+    private static final String WS_ONE = "[" + chr(9) + chr(10) + chr(13) + " ]+";
+    private static String chr(int c) { return String.valueOf((char) c); }
 }

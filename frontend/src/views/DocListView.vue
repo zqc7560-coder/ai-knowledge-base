@@ -77,6 +77,20 @@ const fmtSize = (n: number) => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : 
 const statusType = (s: string) =>
   (s === "READY" ? "success" : s === "FAILED" ? "danger" : s === "UPLOADED" ? "info" : "warning") as never;
 
+const ingestUrl = ref("");
+const ingesting = ref(false);
+async function doIngest() {
+  if (!ingestUrl.value.trim()) return;
+  ingesting.value = true;
+  try {
+    const created = (await http.post(`/kb/${kbId}/ingest-url`, { url: ingestUrl.value.trim() })) as any;
+    ElMessage.success("网页正文已入库，处理中");
+    docs.value.unshift(created as unknown as DocRow);
+    ingestUrl.value = "";
+    pollBusy();
+  } catch { /* toast */ } finally { ingesting.value = false; }
+}
+
 const chunkShow = ref(false);
 const chunkDoc = ref<any>(null);
 function openChunks(row: any) { chunkDoc.value = row; chunkShow.value = true; }

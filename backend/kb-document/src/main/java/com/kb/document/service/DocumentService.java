@@ -77,6 +77,41 @@ public class DocumentService {
         }
     }
 
+    /**
+     * M9.6 URL 抓正文入库：SSRF 校验+抓取+转 Markdown 后，把结果当作 .md 文件走完全相同的
+     * 切片/向量管道（入库路径归一，不为 URL 单开第二套处理逻辑）。
+     */
+    public Document ingestUrl(User me, Long kbId, String url, com.kb.document.service.UrlIngestService fetcher) {
+        KnowledgeBase kb = access.require(kbId, me, KbAccessService.Perm.EDIT);
+        com.kb.document.service.UrlIngestService.Fetched fr = fetcher.fetch(url);
+        String md = fr.markdown();
+        Path dir = uploadRoot.resolve(String.valueOf(kb.getId()));
+        String fn = "url_" + Integer.toHexString(fr.finalUrl().hashCode()) + ".md";
+        Path target = dir.resolve(System.currentTimeMillis() + "_" + fn);
+        try {
+            Files.createDirectories(dir);
+            Files.writeString(target, md, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException e) { throw BizException.of(BizCode.INTERNAL_ERROR, "正文保存失败"); }
+        try {
+            if (Files.size(target) == 0) throw BizException.of(BizCode.PARAM_INVALID, "未能提取到正文");
+        } catch (IOException e) { throw BizException.of(BizCode.PARAM_INVALID, "未能提取到正文"); }
+
+        Document d = new Document();
+        d.setKbId(kb.getId());
+        d.setUploaderId(me.getId());
+        d.setFilename(fr.title().length() > 60 ? fr.title().substring(0, 60) : fr.title());
+        d.setFilePath(target.toString());
+        d.setFileType("md");
+        try { d.setFileSize(Files.size(target)); } catch (IOException ignore) { d.setFileSize(1L); }
+        d.setSha256(sha256(target));
+        d.setStatus(DocStatus.UPLOADED.name());
+        d.setChunkCount(0); d.setTokens(0); d.setDeleted(0);
+        docs.insert(d);
+        final Long docId = d.getId();
+        pool.submit(() -> process(docId));
+        return d;
+    }
+
     public Document upload(User me, Long kbId, MultipartFile file) { return upload(me, kbId, file, false); }
 
     public Document upload(User me, Long kbId, MultipartFile file, boolean replaceByName) {

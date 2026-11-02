@@ -17,18 +17,28 @@ public class DocumentController {
     private final DocumentService docs;
     private final AuthService auth;
     private final com.kb.document.service.ChunkAdminService chunkAdmin;
+    private final com.kb.document.service.UrlIngestService urlFetcher;
 
     public DocumentController(DocumentService docs, AuthService auth,
-                              com.kb.document.service.ChunkAdminService chunkAdmin) {
+                              com.kb.document.service.ChunkAdminService chunkAdmin,
+                              com.kb.document.service.UrlIngestService urlFetcher) {
         this.docs = docs;
         this.auth = auth;
         this.chunkAdmin = chunkAdmin;
+        this.urlFetcher = urlFetcher;
     }
 
     @PostMapping("/kb/{kbId}/documents")
     public Result<Document> upload(@PathVariable Long kbId, @RequestParam("file") MultipartFile file,
                                    @RequestParam(name = "replace", defaultValue = "false") boolean replaceByName) {
         return Result.ok(docs.upload(auth.currentUser(), kbId, file, replaceByName));
+    }
+
+    // M9.6 URL 抓正文入库（SSRF 三防线见 UrlIngestService）
+    @PostMapping("/kb/{kbId}/ingest-url")
+    public Result<com.kb.domain.entity.Document> ingestUrl(@PathVariable Long kbId,
+            @RequestBody java.util.Map<String, String> body) {
+        return Result.ok(docs.ingestUrl(auth.currentUser(), kbId, body.get("url"), urlFetcher));
     }
 
     @GetMapping("/documents")
