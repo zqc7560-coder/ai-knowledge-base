@@ -2,6 +2,7 @@
   <div class="page">
     <div class="bar">
       <h2>我的知识库</h2>
+      <el-button @click="$router.push('/debug')">检索调试</el-button>
       <el-button type="primary" @click="openCreate">＋ 新建知识库</el-button>
     </div>
 
@@ -60,6 +61,17 @@
         <el-form-item v-if="f.parentChild" label="父窗范围">
           <el-input-number v-model="f.pcSpan" :min="1" :max="5" /> 片
         </el-form-item>
+        <el-form-item label="HyDE">
+          <el-switch v-model="f.hyde" />
+          <span class="hint" style="margin-left:10px">向量通道用"假设答案"检索（+1 次小模型调用）</span>
+        </el-form-item>
+        <el-form-item label="多查询">
+          <el-switch v-model="f.multiQuery" />
+          <span class="hint" style="margin-left:10px">原问题+假设答案双路召回取并集</span>
+        </el-form-item>
+        <el-form-item>
+          <el-button size="small" @click="goDebug">检索调试 →</el-button>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dlgShow = false">取消</el-button>
@@ -93,12 +105,15 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "../api/http";
 
+const router = useRouter();
+
 interface Kb { id: number; name: string; description?: string; visibility: string;
   chunkSize: number; chunkOverlap: number; topK: number; scoreThreshold: number;
-  parentChild?: number; pcSpan?: number }
+  parentChild?: number; pcSpan?: number; hyde?: number; multiQuery?: number }
 
 const kbs = ref<Kb[]>([]);
 const loading = ref(true);
@@ -106,8 +121,10 @@ const dlgShow = ref(false);
 const saving = ref(false);
 const editing = ref<Kb | null>(null);
 const f = reactive({ name: "", description: "", visibility: "PRIVATE",
-  chunkSize: 500, chunkOverlap: 100, topK: 5, scoreThreshold: 0.25, parentChild: false, pcSpan: 2 });
+  chunkSize: 500, chunkOverlap: 100, topK: 5, scoreThreshold: 0.25, parentChild: false, pcSpan: 2,
+  hyde: false, multiQuery: false });
 
+function goDebug() { dlgShow.value = false; router.push({ name: "debug", query: editing.value ? { kb: editing.value.id } : {} }); }
 const memShow = ref(false);
 const memberKb = ref<Kb | null>(null);
 const memberList = ref<{ userId: number; permission: string }[]>([]);
@@ -126,7 +143,8 @@ async function reload() {
 function openCreate() {
   editing.value = null;
   Object.assign(f, { name: "", description: "", visibility: "PRIVATE",
-    chunkSize: 500, chunkOverlap: 100, topK: 5, scoreThreshold: 0.25, parentChild: false, pcSpan: 2 });
+    chunkSize: 500, chunkOverlap: 100, topK: 5, scoreThreshold: 0.25, parentChild: false, pcSpan: 2,
+  hyde: false, multiQuery: false });
   dlgShow.value = true;
 }
 
@@ -134,7 +152,8 @@ function openSettings(kb: Kb) {
   editing.value = kb;
   Object.assign(f, { name: kb.name, description: kb.description || "", visibility: kb.visibility,
     chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap, topK: kb.topK,
-    scoreThreshold: Number(kb.scoreThreshold), parentChild: kb.parentChild === 1, pcSpan: kb.pcSpan || 2 });
+    scoreThreshold: Number(kb.scoreThreshold), parentChild: kb.parentChild === 1, pcSpan: kb.pcSpan || 2,
+    hyde: kb.hyde === 1, multiQuery: kb.multiQuery === 1 });
   dlgShow.value = true;
 }
 

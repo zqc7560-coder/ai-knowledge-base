@@ -34,7 +34,8 @@ public class KbService {
 
     public record CreateCmd(String name, String description, String visibility,
                             Integer chunkSize, Integer chunkOverlap, Integer topK, BigDecimal scoreThreshold,
-                            Boolean parentChild, Integer pcSpan) {}
+                            Boolean parentChild, Integer pcSpan,
+                            Boolean hyde, Boolean multiQuery) {}
 
     public KnowledgeBase create(User me, CreateCmd cmd) {
         if (cmd.name() == null || cmd.name().isBlank() || cmd.name().length() > 100)
@@ -53,6 +54,8 @@ public class KbService {
         kb.setEmbeddingModel("text-embedding-v3");
         kb.setParentChild(Boolean.TRUE.equals(cmd.parentChild()) ? 1 : 0);
         kb.setPcSpan(clamp(cmd.pcSpan(), 1, 5, 2));
+        kb.setHyde(Boolean.TRUE.equals(cmd.hyde()) ? 1 : 0);
+        kb.setMultiQuery(Boolean.TRUE.equals(cmd.multiQuery()) ? 1 : 0);
         kb.setDeleted(0);
         kbs.insert(kb);
         return kb;
@@ -75,6 +78,8 @@ public class KbService {
         if (cmd.scoreThreshold() != null) kb.setScoreThreshold(cmd.scoreThreshold());
         if (cmd.parentChild() != null) kb.setParentChild(cmd.parentChild() ? 1 : 0);
         if (cmd.pcSpan() != null) kb.setPcSpan(clamp(cmd.pcSpan(), 1, 5, kb.getPcSpan() == null ? 2 : kb.getPcSpan()));
+        if (cmd.hyde() != null) kb.setHyde(cmd.hyde() ? 1 : 0);
+        if (cmd.multiQuery() != null) kb.setMultiQuery(cmd.multiQuery() ? 1 : 0);
         kbs.updateById(kb);
         return kb;
     }

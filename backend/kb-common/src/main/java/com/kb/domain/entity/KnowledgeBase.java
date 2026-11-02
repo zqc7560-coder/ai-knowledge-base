@@ -35,6 +35,10 @@
 
     private Integer pcSpan;
 
+    private Integer hyde;
+
+    private Integer multiQuery;
+
     @TableLogic
     private Integer deleted;
 

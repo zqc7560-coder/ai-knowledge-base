@@ -130,7 +130,23 @@ public class RagService {
         //    向量擅长语义近似但会漏"型号/专有名词"这类精确 token；全文正好互补。
         //    放大 4 倍（上限20）召回是给下一步 cross-encoder 精排留候选池——初筛宽、精筛严。
         int wideK = Math.min(topK * 4, 20);
-        List<VectorStore.Hit> vecHits = vectors.search(searchQuery, kbIds, wideK, 0.0);
+        // M8.2 HyDE / 多查询：短疑问句与陈述式文档在嵌入空间有"文体差"——
+        // 让模型先写一段"假设答案"，用假设答案(陈述体)去向量召回，更接近文档文体。
+        // hyde=只用假设答案嵌入(向量通道)；multi_query=原问题+假设答案双路取并集(更稳)。
+        // 全文通道始终用原问题——精确 token(型号/编号)不该被改写稀释。
+        String hypo = null;
+        boolean hydeOn = firstKb.getHyde() != null && firstKb.getHyde() == 1;
+        boolean mqOn = firstKb.getMultiQuery() != null && firstKb.getMultiQuery() == 1;
+        if (hydeOn || mqOn) hypo = hypothesize(searchQuery);
+        List<VectorStore.Hit> vecHits;
+        if (hypo != null && hydeOn && !mqOn) {
+            vecHits = vectors.search(hypo, kbIds, wideK, 0.0);
+        } else if (hypo != null && mqOn) {
+            vecHits = unionRrf(vectors.search(searchQuery, kbIds, wideK, 0.0),
+                               vectors.search(hypo, kbIds, wideK, 0.0), wideK);
+        } else {
+            vecHits = vectors.search(searchQuery, kbIds, wideK, 0.0);
+        }
         List<VectorStore.Hit> recall;
         if (hybridEnabled) {
             List<DocumentChunk> kwHits = keywordRecall(searchQuery, kbIds, wideK);
@@ -310,6 +326,119 @@ public class RagService {
         }
         return out;
     }
+
+    /** HyDE 假设答案：一次小调用(60 token 内)，失败静默回退普通检索——增强项不能拖累主链路。 */
+    private String hypothesize(String query) {
+        try {
+            String out = ai.chat(java.util.List.of(Map.of(
+                    "role", "user",
+                    "content", "请针对下面的问题，写一段100字以内、可能出现在相关文档中的" +
+                            "陈述性答案段落（不确定就写通用流程，不要说不知道）：\n" + query)),
+                    0.3, 160);
+            out = out == null ? "" : out.trim();
+            return (out.isEmpty() || out.length() > 800) ? null : out;
+        } catch (Exception e) {
+            log.info("hyde skipped: {}", e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /** 两路向量结果按名次 RRF 融合取并集（复用 M4 融合公式的轻量内部版）。 */
+    private List<VectorStore.Hit> unionRrf(List<VectorStore.Hit> a, List<VectorStore.Hit> b, int k) {
+        Map<Long, Double> score = new java.util.LinkedHashMap<>();
+        Map<Long, VectorStore.Hit> byId = new java.util.HashMap<>();
+        for (var pair : List.of(a, b)) {
+            for (int i = 0; i < pair.size(); i++) {
+                var h = pair.get(i);
+                score.merge(h.chunkId(), 1.0 / (60 + i + 1), Double::sum);
+                byId.putIfAbsent(h.chunkId(), h);
+            }
+        }
+        return score.entrySet().stream()
+                .sorted(Map.Entry.<Long, Double>comparingByValue().reversed())
+                .limit(k)
+                .map(e -> byId.get(e.getKey()))
+                .toList();
+    }
+
+    /**
+     * 检索调试（M8.3）：跑真实管道但把每一阶段的中间结果原样带出，不生成答案不落库。
+     * 与 ask() 保持一致的阶段顺序（改写→宽召回→RRF→精排→父窗），面板看到的即线上行为。
+     */
+    public Map<String, Object> debugRetrieve(User me, List<Long> kbIds, String question) {
+        KnowledgeBase firstKb = access.loadExisting(kbIds.get(0));
+        int topK = kbIds.size() == 1 ? firstKb.getTopK() : 5;
+        double threshold = kbIds.size() == 1 ? firstKb.getScoreThreshold().doubleValue() : 0.25;
+        Map<String, Object> out = new LinkedHashMap<>();
+        String searchQuery = rewriteIfNeeded(loadConvForDebug(me, kbIds), question);
+        out.put("original", question);
+        out.put("rewritten", searchQuery);
+
+        int wideK = Math.min(topK * 4, 20);
+        var vecHits = vectors.search(searchQuery, kbIds, wideK, 0.0);
+        out.put("vectorHits", brief(vecHits));
+        List<VectorStore.Hit> fused;
+        if (hybridEnabled) {
+            var kw = keywordRecall(searchQuery, kbIds, wideK);
+            out.put("keywordHits", kw.stream().map(c -> Map.<String, Object>of(
+                    "chunkId", c.getId(), "docId", c.getDocId(), "kbId", c.getKbId(),
+                    "score", 0.0, "snippet", clip(c.getContent(), 120))).toList());
+            fused = fuseChannels(vecHits, kw, wideK);
+        } else {
+            fused = vecHits;
+        }
+        out.put("fused", brief(fused));
+
+        List<Map<String, Object>> reranked = new ArrayList<>();
+        List<VectorStore.Hit> ranked;
+        if (!rerankEnabled) {
+            ranked = fused.subList(0, Math.min(topK, fused.size()));
+            out.put("rerank", "disabled");
+        } else try {
+            var docs = fused.stream().map(VectorStore.Hit::content).toList();
+            var rr = ai.rerank(searchQuery, docs, topK);
+            ranked = new ArrayList<>();
+            for (var it : rr) {
+                var h = fused.get(it.index());
+                reranked.add(Map.<String, Object>of("chunkId", h.chunkId(), "docId", h.docId(),
+                        "score", it.score(), "passed", it.score() >= threshold,
+                        "snippet", clip(h.content(), 120)));
+                if (it.score() >= threshold) ranked.add(h);
+            }
+            if (ranked.isEmpty()) ranked = fused.subList(0, Math.min(topK, fused.size()));
+            out.put("rerank", reranked);
+        } catch (Exception e) {
+            ranked = fused.stream().sorted(java.util.Comparator.comparingDouble((VectorStore.Hit s) -> s.score()).reversed())
+                    .limit(topK).toList();
+            out.put("rerank", "degraded: " + e.getClass().getSimpleName());
+        }
+        out.put("finalRanked", brief(ranked));
+
+        boolean pcOn = firstKb.getParentChild() != null && firstKb.getParentChild() == 1;
+        if (pcOn) {
+            out.put("parentExpanded", brief(expandWithParents(ranked, firstKb.getPcSpan() == null ? 2 : firstKb.getPcSpan())));
+        }
+        out.put("switches", Map.of("hybrid", hybridEnabled, "rerank", rerankEnabled,
+                "parentChild", pcOn, "hyde", firstKb.getHyde() != null && firstKb.getHyde() == 1,
+                "multiQuery", firstKb.getMultiQuery() != null && firstKb.getMultiQuery() == 1));
+        return out;
+    }
+
+    /** 调试用伪会话载体：rewriteIfNeeded 需要历史消息——直接构造"无历史"语义即可（调试面板是独立提问）。 */
+    private com.kb.domain.entity.Conversation loadConvForDebug(User me, List<Long> kbIds) {
+        var c = new com.kb.domain.entity.Conversation();
+        c.setId(-1L); c.setUserId(me.getId());
+        c.setKbIds(ConversationService.join(kbIds));
+        return c;
+    }
+
+    private static List<Map<String, Object>> brief(List<VectorStore.Hit> hs) {
+        List<Map<String, Object>> o = new ArrayList<>();
+        for (var h : hs) o.add(Map.<String, Object>of("chunkId", h.chunkId(), "docId", h.docId(),
+                "kbId", h.kbId(), "score", h.score(), "snippet", clip(h.content(), 120)));
+        return o;
+    }
+    private static String clip(String s, int n) { return s == null ? "" : (s.length() <= n ? s : s.substring(0, n) + "…"); }
 
     /**
      * child→parent 窗口扩展：同文档 seqNo±span 合并为一段喂模型。

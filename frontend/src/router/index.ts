@@ -11,6 +11,7 @@ const router = createRouter({
         { path: "", name: "home", component: () => import("../views/KbListView.vue") },
         { path: "kb/:id/docs", name: "docs", component: () => import("../views/DocListView.vue") },
         { path: "chat", name: "chat", component: () => import("../views/ChatView.vue") },
+        { path: "debug", name: "debug", component: () => import("../views/DebugView.vue") },
         { path: "admin", name: "admin", component: () => import("../views/AdminView.vue") },
       ],
     },
