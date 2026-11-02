@@ -15,6 +15,7 @@
         <p class="desc">{{ kb.description || "（暂无描述）" }}</p>
         <div class="meta">切片 {{ kb.chunkSize }}±{{ kb.chunkOverlap }} · TopK {{ kb.topK }} · 阈值 {{ kb.scoreThreshold }}</div>
         <div class="ops">
+          <el-button size="small" type="primary" plain @click="$router.push(`/kb/${kb.id}/docs`)">文档</el-button>
           <el-button size="small" @click="openSettings(kb)">设置</el-button>
           <el-button size="small" @click="openMembers(kb)">成员</el-button>
           <el-popconfirm title="删除知识库及其全部文档？" @confirm="del(kb)">

@@ -28,3 +28,7 @@ logs/
 
 .DS_Store
 Thumbs.db
+nul:
+nul
+**/nul
+tsconfig.tsbuildinfo

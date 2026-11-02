@@ -9,7 +9,7 @@ const router = createRouter({
       component: () => import("../views/AppLayout.vue"),
       children: [
         { path: "", name: "home", component: () => import("../views/KbListView.vue") },
-        { path: "kb/:id/docs", name: "docs", component: () => import("../views/KbListView.vue") },
+        { path: "kb/:id/docs", name: "docs", component: () => import("../views/DocListView.vue") },
       ],
     },
     { path: "/login", name: "login", component: () => import("../views/LoginView.vue") },

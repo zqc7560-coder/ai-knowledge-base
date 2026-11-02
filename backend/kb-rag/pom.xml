@@ -4,7 +4,7 @@
   <parent><groupId>com.kb</groupId><artifactId>kb-parent</artifactId><version>0.1.0</version></parent>
   <artifactId>kb-rag</artifactId>
   <dependencies>
-    <dependency><groupId>com.kb</groupId><artifactId>kb-document</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>com.kb</groupId><artifactId>kb-common</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>dev.langchain4j</groupId><artifactId>langchain4j</artifactId></dependency>
     <dependency><groupId>dev.langchain4j</groupId><artifactId>langchain4j-open-ai</artifactId></dependency>
     <dependency><groupId>dev.langchain4j</groupId><artifactId>langchain4j-pgvector</artifactId></dependency>
