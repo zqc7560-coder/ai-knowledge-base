@@ -10,8 +10,15 @@
       </div>
       <div class="right" v-if="store.me">
         <el-button text @click="$router.push('/keys')">API 密钥</el-button>
-        <span class="uname">{{ store.me.username }}</span>
-        <el-button size="small" text @click="doLogout">退出</el-button>
+        <el-dropdown trigger="click">
+          <span class="uname userdrop">{{ store.me.username }} ▾</span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="$router.push('/profile')">个人设置</el-dropdown-item>
+              <el-dropdown-item divided @click="doLogout">退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </el-header>
     <el-main><router-view /></el-main>
@@ -52,4 +59,5 @@ async function doLogout() {
 .brand { font-weight: 700; font-size: 17px; cursor: pointer; }
 .right { display: flex; align-items: center; gap: 8px; }
 .uname { color: #606266; }
+.userdrop { cursor: pointer; color: #4c7dff; font-weight: 500; }
 </style>
