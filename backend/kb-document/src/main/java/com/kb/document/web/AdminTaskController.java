@@ -49,8 +49,10 @@ public class AdminTaskController {
     }
 
     @GetMapping("/tasks")
-    public Result<List<com.kb.domain.entity.ProcessTask>> tasks() {
-        return Result.ok(reindex.history());
+    public Result<Map<String, Object>> tasks(@RequestParam(required = false) String type,
+                                             @RequestParam(defaultValue = "1") int page,
+                                             @RequestParam(defaultValue = "20") int size) {
+        return Result.ok(reindex.history(type, page, size));
     }
 
     /** 月报：按用户聚合 token 与估算成本（牌价近似），附全局汇总。 */

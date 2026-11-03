@@ -73,9 +73,13 @@ public class ShareFeedbackController {
     /** 管理页：点踩答案清单（badcase 收集）。ADMIN 专属（注解校验已在 SaTokenConfig 打开）。 */
     @cn.dev33.satoken.annotation.SaCheckRole("ADMIN")
     @GetMapping("/admin/messages/disliked")
-    public Result<List<Message>> disliked() {
-        return Result.ok(msgs.selectList(new LambdaQueryWrapper<Message>()
-                .eq(Message::getFeedback, -1).orderByDesc(Message::getId).last("limit 100")));
+    public Result<Map<String, Object>> disliked(@RequestParam(defaultValue = "1") int page,
+                                                @RequestParam(defaultValue = "20") int size) {
+        int sz = Math.min(Math.max(size, 1), 100);
+        long total = msgs.selectCount(new LambdaQueryWrapper<Message>().eq(Message::getFeedback, -1));
+        var q = new LambdaQueryWrapper<Message>().eq(Message::getFeedback, -1)
+                .orderByDesc(Message::getId).last("limit " + sz + " offset " + (Math.max(page, 1) - 1) * sz);
+        return Result.ok(Map.of("rows", msgs.selectList(q), "total", total));
     }
 
     // ---------- 分享 ----------

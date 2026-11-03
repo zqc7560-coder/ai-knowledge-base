@@ -86,12 +86,22 @@ public class AdminController {
         return Result.ok(redis.opsForHash().entries(key));
     }
 
-    /** 今日剩余配额视角（管理页展示用）：已用次数按用户。 */
+    /** 用户列表（分页+搜索）：kw 命中用户名/邮箱；返回 {rows,total}。 */
     @GetMapping("/users")
-    public Result<List<User>> userList() {
-        List<User> list = users.selectList(new LambdaQueryWrapper<User>().orderByDesc(User::getId));
+    public Result<Map<String, Object>> userList(@RequestParam(required = false) String kw,
+                                                @RequestParam(defaultValue = "1") int page,
+                                                @RequestParam(defaultValue = "20") int size) {
+        int sz = Math.min(Math.max(size, 1), 100);
+        var q = new LambdaQueryWrapper<User>();
+        if (kw != null && !kw.isBlank()) {
+            String k = kw.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+            q.and(x -> x.like(User::getUsername, k).or().like(User::getEmail, k));
+        }
+        long total = users.selectCount(q);
+        q.orderByDesc(User::getId).last("limit " + sz + " offset " + (Math.max(page, 1) - 1) * sz);
+        List<User> list = users.selectList(q);
         list.forEach(u -> u.setPasswordHash(null));
-        return Result.ok(list);
+        return Result.ok(Map.of("rows", list, "total", total));
     }
 
     /** 禁用/启用账号：status=0 时登录被拒（2004），已登录会话由 Sa-Token 下次校验时拒绝。 */
@@ -125,15 +135,24 @@ public class AdminController {
 
     /** 审计日志查询（M11）：倒序分页，可按动作前缀/用户过滤。ADMIN 专属（类级注解）。 */
     @GetMapping("/audit")
-    public Result<java.util.List<com.kb.domain.entity.AuditLog>> auditQuery(
-            @RequestParam(required = false) String action,
-            @RequestParam(required = false) Long userId,
-            @RequestParam(defaultValue = "100") int limit) {
-        var q = new LambdaQueryWrapper<com.kb.domain.entity.AuditLog>()
-                .orderByDesc(com.kb.domain.entity.AuditLog::getId)
-                .last("limit " + Math.min(Math.max(limit, 1), 500));
-        if (action != null && !action.isBlank()) q.likeRight(com.kb.domain.entity.AuditLog::getAction, action);
+    public Result<Map<String, Object>> auditQuery(@RequestParam(required = false) String action,
+                                                  @RequestParam(required = false) Long userId,
+                                                  @RequestParam(required = false) String kw,
+                                                  @RequestParam(defaultValue = "1") int page,
+                                                  @RequestParam(defaultValue = "20") int size) {
+        int sz = Math.min(Math.max(size, 1), 100);
+        var q = new LambdaQueryWrapper<com.kb.domain.entity.AuditLog>();
+        if (action != null && !action.isBlank()) q.eq(com.kb.domain.entity.AuditLog::getAction, action);
         if (userId != null) q.eq(com.kb.domain.entity.AuditLog::getUserId, userId);
-        return Result.ok(auditLogs.selectList(q));
+        if (kw != null && !kw.isBlank()) {
+            String k = kw.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+            q.and(x -> x.like(com.kb.domain.entity.AuditLog::getUsername, k)
+                    .or().like(com.kb.domain.entity.AuditLog::getTarget, k)
+                    .or().like(com.kb.domain.entity.AuditLog::getDetail, k));
+        }
+        long total = auditLogs.selectCount(q);
+        q.orderByDesc(com.kb.domain.entity.AuditLog::getId)
+         .last("limit " + sz + " offset " + (Math.max(page, 1) - 1) * sz);
+        return Result.ok(Map.of("rows", auditLogs.selectList(q), "total", total));
     }
 }

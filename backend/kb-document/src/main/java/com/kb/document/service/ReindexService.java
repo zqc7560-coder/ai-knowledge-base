@@ -160,10 +160,15 @@ public class ReindexService {
         return m;
     }
 
-    /** 任务历史（管理页，最近 50 条）。 */
-    public List<com.kb.domain.entity.ProcessTask> history() {
-        return taskLog.selectList(new LambdaQueryWrapper<com.kb.domain.entity.ProcessTask>()
-                .orderByDesc(com.kb.domain.entity.ProcessTask::getId).last("LIMIT 50"));
+    /** 任务历史分页（管理页）：type 可选过滤，返回 {rows,total}。 */
+    public java.util.Map<String, Object> history(String type, int page, int size) {
+        int sz = Math.min(Math.max(size, 1), 100);
+        var q = new LambdaQueryWrapper<com.kb.domain.entity.ProcessTask>();
+        if (type != null && !type.isBlank()) q.eq(com.kb.domain.entity.ProcessTask::getType, type);
+        long total = taskLog.selectCount(q);
+        q.orderByDesc(com.kb.domain.entity.ProcessTask::getId)
+         .last("LIMIT " + sz + " OFFSET " + (Math.max(page, 1) - 1) * sz);
+        return java.util.Map.of("rows", taskLog.selectList(q), "total", total);
     }
 
     /** 任务落库：立即 insert 得 rowId。 */
