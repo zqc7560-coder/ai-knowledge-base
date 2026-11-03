@@ -24,12 +24,15 @@ public class KbService {
     private final KbMemberMapper members;
     private final UserMapper users;
     private final KbAccessService access;
+    private final org.springframework.context.ApplicationEventPublisher events;
 
-    public KbService(KnowledgeBaseMapper kbs, KbMemberMapper members, UserMapper users, KbAccessService access) {
+    public KbService(KnowledgeBaseMapper kbs, KbMemberMapper members, UserMapper users, KbAccessService access,
+                     org.springframework.context.ApplicationEventPublisher events) {
         this.kbs = kbs;
         this.members = members;
         this.users = users;
         this.access = access;
+        this.events = events;
     }
 
     public record CreateCmd(String name, String description, String visibility,
@@ -97,7 +100,11 @@ public class KbService {
 
     public void delete(User me, Long kbId) {
         access.require(kbId, me, KbAccessService.Perm.EDIT);
-        kbs.deleteById(kbId); // @TableLogic 软删；向量物理清理由文档管道负责（M2）
+        kbs.deleteById(kbId); // @TableLogic 软删
+        // M12.1 修正原注释谎言（"向量物理清理由文档管道负责"——实际从未有人调用它）：
+        // 删库必须级联清文档/chunk/向量/文件，否则留下孤儿数据（pgvector 行/SDK 分区/磁盘文件）。
+        // 模块方向限制（kb-document→kb-common），以事件把清理责任交回文档侧监听器。
+        events.publishEvent(new KbDeletedEvent(kbId, me.getUsername()));
     }
 
     public List<KnowledgeBase> myVisible(User me) {

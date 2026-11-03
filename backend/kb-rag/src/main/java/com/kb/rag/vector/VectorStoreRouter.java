@@ -27,7 +27,7 @@ public class VectorStoreRouter implements VectorStore {
     private final Map<String, VectorStore> byName;
     private final VectorStore active;
 
-    public VectorStoreRouter(PgVectorStore pg, MilvusStore milvus,
+    public VectorStoreRouter(PgVectorStore pg, MilvusSdkStore milvus,
                              @Value("${kb.vector.store:pgvector}") String store) {
         this.byName = Map.of("pgvector", pg, "milvus", milvus);
         this.active = byName.getOrDefault(store, pg);   // 非法配置回退 pgvector（不因拼写错误起不来）

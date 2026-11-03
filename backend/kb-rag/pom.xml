@@ -5,6 +5,16 @@
   <artifactId>kb-rag</artifactId>
   <dependencies>
     <dependency><groupId>com.kb</groupId><artifactId>kb-common</artifactId><version>${project.version}</version></dependency>
+    <!-- M12.1 Milvus 官方 gRPC SDK（版本与服务端 v2.3.16 同线） -->
+    <dependency><groupId>io.milvus</groupId><artifactId>milvus-sdk-java</artifactId><version>2.3.10</version>
+      <!-- SDK 把 bulk-import(parquet/hdfs) 做成 compile 传递依赖，本项目只用 CRUD：
+           不排除 fat-jar 194MB（hadoop 全家桶 ~110MB），排除后回到常规体量。
+           若将来真用 bulkInsert 再移除此块。 -->
+      <exclusions>
+        <exclusion><groupId>org.apache.hadoop</groupId><artifactId>hadoop-client</artifactId></exclusion>
+        <exclusion><groupId>org.apache.parquet</groupId><artifactId>parquet-hadoop</artifactId></exclusion>
+      </exclusions>
+    </dependency>
     <dependency><groupId>dev.langchain4j</groupId><artifactId>langchain4j</artifactId></dependency>
     <dependency><groupId>dev.langchain4j</groupId><artifactId>langchain4j-open-ai</artifactId></dependency>
     <dependency><groupId>dev.langchain4j</groupId><artifactId>langchain4j-pgvector</artifactId></dependency>

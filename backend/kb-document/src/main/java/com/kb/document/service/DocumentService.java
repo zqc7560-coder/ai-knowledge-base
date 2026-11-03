@@ -252,6 +252,22 @@ public class DocumentService {
      * 向量侧由调用方(ReindexService.deleteByKbIds)整库清过，这里只清 MySQL 行。
      * 状态复位 UPLOADED 保证状态机 UPLOADED→PARSING→… 合法推进（类内 moveTo 拒绝非法迁移）。
      */
+    /**
+     * 整库清理（M12.1，删库级联）：删该库全部文档的 chunk 行、向量、磁盘文件，再删文档行。
+     * 与单文档 delete() 同一套删除语义，只是范围=全库。向量整库走 deleteByKbIds（SDK 侧=drop 分区，O(1)）。
+     * 幂等：软删后再进来 selectList 为空，直接返回。调用方已保证权限（KbService.delete 的 EDIT 裁决）。
+     */
+    public void purgeKb(Long kbId) {
+        List<Document> docs0 = docs.selectList(new LambdaQueryWrapper<Document>().eq(Document::getKbId, kbId));
+        if (docs0.isEmpty()) { vectorStore.deleteByKbIds(List.of(kbId)); return; }
+        for (Document d : docs0) {
+            chunks.delete(new LambdaQueryWrapper<DocumentChunk>().eq(DocumentChunk::getDocId, d.getId()));
+            try { if (d.getFilePath() != null) Files.deleteIfExists(Path.of(d.getFilePath())); } catch (IOException ignore) {}
+        }
+        vectorStore.deleteByKbIds(List.of(kbId));   // pg=按kb_id删行；milvus SDK=dropPartition
+        docs.delete(new LambdaQueryWrapper<Document>().eq(Document::getKbId, kbId));
+    }
+
     public void reprocess(Long docId) {
         Document d = docs.selectById(docId);
         if (d == null) return;
