@@ -294,6 +294,38 @@ step("M10.5 owner sees request", pd.get("code") == 0 and len(pd["data"]) >= 1)
 dcd = js(f"/requests/{ap['data']['id']}/decide", {"approve": True, "permission": "READ"}, tok, method="POST")
 step("M10.5 approve grants READ", dcd.get("code") == 0)
 
+# ---------- M10.6 文档级细粒度权限 ----------
+_dsec = upload(f"/kb/{kb_id}/documents", f"sec{SUF}.md",
+               "## 机密\n\n项目代号是蓝鲸七号。".encode(), tok)
+_sdoc = (_dsec.get("data") or {}).get("id")
+for _ in range(60):
+    _s = js(f"/documents/{_sdoc}/status", token=tok).get("data") or {}
+    if _s.get("status") in ("READY", "FAILED"): break
+    time.sleep(2)
+step("M10.6 secret doc READY", _s.get("status") == "READY")
+step("M10.6 set restricted", js(f"/documents/{_sdoc}/restricted", {"restricted": True}, tok, method="PUT").get("code") == 0)
+# 无 ASK 权的库成员（用 M10.5 申请的 viewer 视角）：列表不含机密
+# —— 本冒烟里 tok 是 owner（恒可见），用另一个用户验证隐藏需要 ASK 成员。简化：直接读列表长度对比
+_pubids = [d["id"] for d in (js(f"/documents?kbId={kb_id}", token=tok).get("data") or [])]
+step("M10.6 owner still sees all", _sdoc in _pubids)
+# 检索后过滤：机密代号不应出现在 owner 会话之外的答案——此处用成员视角重建
+_vu = "dpsmoke_" + uuid.uuid4().hex[:5]
+_vt = js("/auth/register", {"username": _vu, "email": _vu + "@t.local", "password": "dp-pa-12345"})["data"]["token"]
+js(f"/kb/{kb_id}/members", {"username": _vu, "permission": "ASK"}, tok, method="POST")
+_vlist = [d["id"] for d in (js(f"/documents?kbId={kb_id}", token=_vt).get("data") or [])]
+step("M10.6 ASK member list hides secret", _sdoc not in _vlist and len(_vlist) > 0, f"n={len(_vlist)}")
+_vc = (js("/chat/conversations", {"kbIds": [kb_id], "title": "dp"}, _vt).get("data") or {}).get("id")
+_vreq = urllib.request.Request(BASE + "/chat/ask",
+    data=json.dumps({"conversationId": _vc, "question": "项目代号是什么？"}).encode(), method="POST",
+    headers={"Content-Type": "application/json", "Authorization": _vt, "Accept": "text/event-stream"})
+_va, _nm = "", ""
+with urllib.request.urlopen(_vreq, timeout=180) as _r:
+    for _rl in _r:
+        _l = _rl.decode().strip()
+        if _l.startswith("event:"): _nm = _l[6:].strip()
+        elif _l.startswith("data:") and _nm == "delta": _va += _l[5:].strip().strip('"')
+step("M10.6 ASK member cannot retrieve secret", "蓝鲸" not in _va, _va[:40])
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

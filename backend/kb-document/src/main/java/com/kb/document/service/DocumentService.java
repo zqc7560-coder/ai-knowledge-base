@@ -44,6 +44,7 @@ public class DocumentService {
     private final DocumentMapper docs;
     private final DocumentChunkMapper chunks;
     private final KbAccessService access;
+    private final com.kb.document.service.DocPermissionService docPerms;   // M10.6 文档级权限
     private final VectorStore vectorStore;
     private final com.kb.document.parser.OcrService ocrService;
     @org.springframework.beans.factory.annotation.Value("${kb.doc.ocr.image-max:20}")
@@ -61,7 +62,9 @@ public class DocumentService {
                            com.kb.document.parser.OcrService ocrService,
                            org.springframework.data.redis.core.StringRedisTemplate redis,
                            List<DocumentParser> parserList,
+                           com.kb.document.service.DocPermissionService docPerms,
                            @Value("${kb.doc.upload-dir}") String uploadDir) {
+        this.docPerms = docPerms;
         this.docs = docs;
         this.chunks = chunks;
         this.access = access;
@@ -302,8 +305,11 @@ public class DocumentService {
 
     public List<Document> listByKb(User me, Long kbId) {
         access.require(kbId, me, KbAccessService.Perm.READ);
-        return docs.selectList(new LambdaQueryWrapper<Document>()
+        List<Document> all = docs.selectList(new LambdaQueryWrapper<Document>()
                 .eq(Document::getKbId, kbId).orderByDesc(Document::getId));
+        // M10.6：受限文档对无权用户隐藏（列表口径与检索口径共用 hiddenDocIds，单一事实源）
+        var hidden = docPerms.hiddenDocIds(me, List.of(kbId));
+        return hidden.isEmpty() ? all : all.stream().filter(d -> !hidden.contains(d.getId())).toList();
     }
 
     /** 状态+进度（Redis 里的 embedding 进度）。 */
@@ -311,6 +317,8 @@ public class DocumentService {
         Document d = docs.selectById(docId);
         if (d == null) throw BizException.of(BizCode.NOT_FOUND, "文档不存在");
         access.require(d.getKbId(), me, KbAccessService.Perm.READ);
+        if (!docPerms.canSee(me, d))    // M10.6：受限文档状态也不可见（防探测处理进度）
+            throw BizException.of(BizCode.KB_NO_PERMISSION, "没有该操作权限");
         Map<String, Object> m = new HashMap<>();
         m.put("id", d.getId());
         m.put("status", d.getStatus());

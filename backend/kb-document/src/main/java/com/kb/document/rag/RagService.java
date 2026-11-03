@@ -77,6 +77,7 @@ public class RagService {
     private final KbAccessService access;
     private final KnowledgeBaseMapper kbMapper;
     private final DocumentMapper docMapper;
+    private final com.kb.document.service.DocPermissionService docPermSvc;
     private final DocumentChunkMapper chunkMapper;
     private final com.kb.domain.mapper.MessageMapper msgMapper;
     private final JdbcTemplate mysql;
@@ -95,8 +96,10 @@ public class RagService {
     public RagService(AiClientFactory ai, VectorStore vectors, ConversationService convs,
                       KbAccessService access, KnowledgeBaseMapper kbMapper, DocumentMapper docMapper,
                       DocumentChunkMapper chunkMapper, com.kb.domain.mapper.MessageMapper msgMapper,
+                      com.kb.document.service.DocPermissionService docPermSvc,
                       DataSource dataSource,
                       org.springframework.data.redis.core.StringRedisTemplate redis) {
+        this.docPermSvc = docPermSvc;
         this.ai = ai;
         this.vectors = vectors;
         this.convs = convs;
@@ -154,6 +157,11 @@ public class RagService {
         } else {
             recall = vecHits; // 消融：纯向量
         }
+        // M10.6 文档级权限：检索后过滤（向量库不认用户，见 DocPermissionService 注释——
+        // 语义正确优先于 topK 凑满）。owner/EDIT 者 hidden 集恒空，常规路径零额外成本。
+        var hiddenDocs = docPermSvc.hiddenDocIds(me, kbIds);
+        if (!hiddenDocs.isEmpty())
+            recall = recall.stream().filter(h -> !hiddenDocs.contains(h.docId())).toList();
         if (recall.isEmpty()) {
             String refuse = RagPrompts.refuse();
             if (deltaSink != null) deltaSink.accept(refuse);

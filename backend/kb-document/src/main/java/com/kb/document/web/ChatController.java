@@ -40,8 +40,10 @@ public class ChatController {
                           com.kb.domain.mapper.DocumentChunkMapper chunkMapper,
                           com.kb.domain.mapper.DocumentMapper docMapper,
                           com.kb.domain.kb.KbAccessService access,
-                          com.kb.domain.mapper.MessageMapper msgMapper) {
+                          com.kb.domain.mapper.MessageMapper msgMapper,
+                          com.kb.document.service.DocPermissionService docPermSvc) {
         this.msgMapper = msgMapper;
+        this.docPermSvc = docPermSvc;
         this.rag = rag;
         this.convs = convs;
         this.auth = auth;
@@ -184,6 +186,7 @@ public class ChatController {
         for (var c : chunks) {
             access.require(c.getKbId(), me, com.kb.domain.kb.KbAccessService.Perm.READ);
             var d = docs.get(c.getDocId());
+            if (d != null && !docPermSvc.canSee(me, d)) continue;   // M10.6：受限文档引用不回放
             Map<String, Object> m = new java.util.LinkedHashMap<>();
             m.put("chunkId", c.getId());
             m.put("docId", c.getDocId());
@@ -200,6 +203,7 @@ public class ChatController {
     private final com.kb.domain.mapper.DocumentMapper docMapper;
     private final com.kb.domain.kb.KbAccessService access;
     private final com.kb.domain.mapper.MessageMapper msgMapper;
+    private final com.kb.document.service.DocPermissionService docPermSvc;
 
     /**
      * 引用上下文窗口：给定 chunkId，返回同文档相邻 ±around 个切片（按序），
@@ -214,6 +218,8 @@ public class ChatController {
         var hit = chunkMapper.selectById(cid.longValue());
         if (hit == null) return Result.ok(List.of());
         access.require(hit.getKbId(), me, com.kb.domain.kb.KbAccessService.Perm.READ);
+        var hitDoc = docMapper.selectById(hit.getDocId());
+        if (hitDoc != null && !docPermSvc.canSee(me, hitDoc)) return Result.ok(List.of());  // M10.6
         int lo = Math.max(0, hit.getSeqNo() - around), hi = hit.getSeqNo() + around;
         var list = chunkMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query
                 .LambdaQueryWrapper<com.kb.domain.entity.DocumentChunk>()

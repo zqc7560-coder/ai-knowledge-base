@@ -29,6 +29,8 @@
 
     private String status;
 
+    private Integer restricted;   // M10.6 文档级受限位
+
     private String errorMsg;
 
     private Integer chunkCount;
