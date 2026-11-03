@@ -86,8 +86,8 @@
         <div class="row">
           <el-input v-model="q" type="textarea" :rows="2" resize="none"
                     placeholder="基于知识库提问，Enter 发送，Shift+Enter 换行"
-                    @keydown.enter.exact.prevent="send" />
-          <el-button type="primary" :disabled="!q.trim() || asking || !current" @click="send">发送</el-button>
+                    @keydown.enter.exact.prevent="send()" />
+          <el-button type="primary" :disabled="!q.trim() || asking || !current" @click="send()">发送</el-button>
         </div>
       </footer>
     </section>
