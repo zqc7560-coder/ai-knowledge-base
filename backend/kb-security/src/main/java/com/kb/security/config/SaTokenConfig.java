@@ -31,6 +31,8 @@ public class SaTokenConfig implements WebMvcConfigurer {
                 .excludePathPatterns(
                         "/api/auth/register",
                         "/api/auth/login",
+                        // 找回密码（M11.3）三端点匿名可用；滥用防护全在 PasswordResetService 限流
+                        "/api/auth/password/**",
                         "/api/ping",
                         // 分享只读视图：凭证即授权（随机 token 不可枚举），无登录可访问；
                         // 端点本身只回会话消息，不含库元信息且不可提问（ShareFeedbackController 注释）

@@ -19,6 +19,30 @@
       <el-button type="primary" style="width: 100%" :loading="loading" @click="submit">
         {{ tab === "login" ? "登 录" : "注 册" }}
       </el-button>
+      <div v-if="tab === 'login' && resetAvailable" class="forgot">
+        <el-link type="info" :underline="false" @click="openForgot">忘记密码？</el-link>
+      </div>
+
+    <!-- 找回密码（M11.3）：两步——邮箱发码 → 验证码+新密码 -->
+    <el-dialog v-model="forgot" title="找回密码" width="380px">
+      <el-steps :active="forgotStep" simple style="margin-bottom: 16px">
+        <el-step title="邮箱" /><el-step title="验证并重置" />
+      </el-steps>
+      <div v-if="forgotStep === 0">
+        <el-input v-model="fpEmail" placeholder="注册时使用的邮箱" />
+        <div class="tip">若该邮箱已注册，验证码将发送到邮箱（10 分钟有效）。</div>
+      </div>
+      <div v-else>
+        <el-input v-model="fpCode" placeholder="6 位验证码" maxlength="6" style="margin-bottom: 10px" />
+        <el-input v-model="fpNew" type="password" placeholder="新密码（8-64 位）" show-password />
+      </div>
+      <template #footer>
+        <el-button @click="forgot = false">取消</el-button>
+        <el-button type="primary" :loading="fpBusy" @click="forgotNext">
+          {{ forgotStep === 0 ? "发送验证码" : "重置密码" }}
+        </el-button>
+      </template>
+    </el-dialog>
     </el-card>
   </div>
 </template>
@@ -31,6 +55,32 @@ import { http } from "../api/http";
 import { useUserStore } from "../stores/user";
 
 const tab = ref<"login" | "register">("login");
+const resetAvailable = ref(false);
+const forgot = ref(false);
+const forgotStep = ref(0);
+const fpEmail = ref(""); const fpCode = ref(""); const fpNew = ref("");
+const fpBusy = ref(false);
+function openForgot() { forgot.value = true; forgotStep.value = 0; }
+async function forgotNext() {
+  if (forgotStep.value === 0) {
+    if (!/^[\w.+-]+@[\w-]+(\.[\w-]+)+$/.test(fpEmail.value)) { ElMessage.warning("邮箱格式不正确"); return; }
+    fpBusy.value = true;
+    try {
+      await http.post("/auth/password/reset-request", { email: fpEmail.value });
+      ElMessage.success("验证码已发送，请查收件箱");
+      forgotStep.value = 1;
+    } finally { fpBusy.value = false; }
+  } else {
+    if (!/^\d{6}$/.test(fpCode.value)) { ElMessage.warning("验证码为 6 位数字"); return; }
+    if (fpNew.value.length < 8 || fpNew.value.length > 64) { ElMessage.warning("新密码需 8-64 位"); return; }
+    fpBusy.value = true;
+    try {
+      await http.post("/auth/password/reset-confirm", { email: fpEmail.value, code: fpCode.value, password: fpNew.value });
+      ElMessage.success("密码已重置，请用新密码登录");
+      forgot.value = false; form.password = "";
+    } finally { fpBusy.value = false; }
+  }
+}
 const form = reactive({ username: "", email: "", password: "" });
 const loading = ref(false);
 const router = useRouter();
@@ -61,4 +111,6 @@ async function submit() {
 
 <style scoped>
 .wrap { max-width: 380px; margin: 72px auto; padding: 0 16px; }
+.forgot { text-align: right; margin-top: 8px; }
+.tip { color: #999; font-size: 12px; margin-top: 6px; }
 </style>

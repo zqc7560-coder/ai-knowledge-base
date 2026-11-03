@@ -65,6 +65,16 @@ kb:
     ocr-enabled: ${KB_OCR_ENABLED:true}
     ocr-max-pages: 30
 
+# 找回密码 SMTP（M11.3）：凭据经环境变量注入（L8 红线，yml 零明文）
+mail:
+  host: ${MAIL_HOST:}
+  port: ${MAIL_PORT:465}
+  username: ${MAIL_USERNAME:}
+  password: ${MAIL_PASSWORD:}
+  from: ${MAIL_FROM:}
+  smtp:
+    ssl-enable: ${MAIL_SSL:1}
+
 sa-token:
   token-name: Authorization
   timeout: 604800
