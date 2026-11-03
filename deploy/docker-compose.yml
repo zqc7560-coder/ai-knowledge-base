@@ -72,6 +72,13 @@ services:
       PGVECTOR_PASSWORD: ${PGVECTOR_PASSWORD}
       KB_ADMIN_USERNAME: ${KB_ADMIN_USERNAME:-}
       KB_ADMIN_PASSWORD: ${KB_ADMIN_PASSWORD:-}
+      # 找回密码 SMTP（M11.3）：值在 deploy/.env；未配置时 reset-available 返回 false，前端自动隐藏入口
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-465}
+      MAIL_SSL: ${MAIL_SSL:-1}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
       UPLOAD_DIR: /app/data/uploads
       # 本机 WSL2 容器直连外网被掐（docs/08 已知坑）：deploy/.env 配
       # KB_PROXY_OPTS="-Dhttps.proxyHost=host.docker.internal -Dhttps.proxyPort=7890 -Dhttp.nonProxyHosts=..."

@@ -90,7 +90,11 @@ public class PasswordResetService {
     }
 
     public boolean smtpConfigured() {
-        return !mail.getHost().isBlank() && mail.getUsername() != null && !mail.getUsername().isBlank();
+        // getHost() 未配置时为 null（JavaMailSenderImpl 默认值）——必须判 null：
+        // 曾因 host.isBlank() 在容器形态(无 MAIL_* env)直接 NPE→1003，
+        // reset-available 接口挂掉 → 前端"忘记密码"链接永远不显示（M11.3 验收只测了配好 SMTP 的路径，漏了未配置路径）。
+        final String host = mail.getHost();
+        return host != null && !host.isBlank() && mail.getUsername() != null && !mail.getUsername().isBlank();
     }
 
     /** 发起找回：始终回同一形状（防枚举）。ip 用于粗限流。 */

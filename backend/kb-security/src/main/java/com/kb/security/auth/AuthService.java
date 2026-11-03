@@ -61,6 +61,55 @@ public class AuthService {
         return doLogin(u, req);
     }
 
+    /**
+     * 修改密码（用户自助）：<b>必须携带正确旧密码</b>——改密是敏感动作，
+     * 仅凭"当前有会话"不够（共享电脑忘锁屏/令牌被捡的场景直接裸奔）。
+     * 新密码两次输入一致性由前端拦（体验），长度规则服务端再拦（安全底线不信任前端）。
+     * 改密成功后当前 token 不强制失效（避免误伤"自己改自己"主流程），但事件进审计。
+     */
+    public void changePassword(User me, String oldPassword, String newPassword) {
+        if (newPassword == null || newPassword.length() < MIN_PWD || newPassword.length() > MAX_PWD)
+            throw BizException.of(BizCode.PARAM_INVALID, "新密码需8-64位");
+        if (oldPassword == null || oldPassword.isBlank())
+            throw BizException.of(BizCode.PARAM_INVALID, "请输入当前密码");
+        User fresh = users.selectById(me.getId());
+        if (fresh == null || !Passwords.matches(oldPassword, fresh.getPasswordHash()))
+            throw BizException.of(BizCode.PARAM_INVALID, "当前密码不正确");
+        if (newPassword.equals(oldPassword))
+            throw BizException.of(BizCode.PARAM_INVALID, "新密码不能与当前密码相同");
+        User upd = new User();
+        upd.setId(me.getId());
+        upd.setPasswordHash(Passwords.hash(newPassword));
+        users.updateById(upd);
+        log.info("password changed user={}", me.getUsername());
+    }
+
+    /** 修改邮箱（用户自助）：同样要验证当前密码（邮箱=找回密码的凭据载体，改它≈改密码强度）。 */
+    public void changeEmail(User me, String newEmail, String password) {
+        String e = newEmail == null ? "" : newEmail.trim().toLowerCase();
+        if (!EMAIL.matcher(e).matches())
+            throw BizException.of(BizCode.PARAM_INVALID, "邮箱格式不正确");
+        if (password == null || !Passwords.matches(password, users.selectById(me.getId()).getPasswordHash()))
+            throw BizException.of(BizCode.PARAM_INVALID, "当前密码不正确");
+        if (users.selectCount(new LambdaQueryWrapper<User>().eq(User::getEmail, e)
+                .ne(User::getId, me.getId())) > 0)
+            throw BizException.of(BizCode.PARAM_INVALID, "该邮箱已被其他账号使用");
+        User upd = new User();
+        upd.setId(me.getId());
+        upd.setEmail(e);
+        try {
+            users.updateById(upd);
+        } catch (Exception dup) {   // email 唯一索引兜底（并发注册同邮箱）
+            throw BizException.of(BizCode.PARAM_INVALID, "该邮箱已被其他账号使用");
+        }
+        log.info("email changed user={} -> {}", me.getUsername(), maskEmail(e));
+    }
+
+    private static String maskEmail(String e) {
+        int at = e.indexOf('@');
+        return at <= 1 ? "***" : e.charAt(0) + "***" + e.substring(at);
+    }
+
     public String login(String username, String password, HttpServletRequest req) {
         String ip = clientIp(req);
         if (!limiter.tryAcquireAttempt(ip))
