@@ -326,6 +326,27 @@ with urllib.request.urlopen(_vreq, timeout=180) as _r:
         elif _l.startswith("data:") and _nm == "delta": _va += _l[5:].strip().strip('"')
 step("M10.6 ASK member cannot retrieve secret", "蓝鲸" not in _va, _va[:40])
 
+# ---------- M10.7 开放 API ----------
+_kr = js("/keys", {"name": "smokekey", "kbIds": [kb_id]}, tok, method="POST")
+_plain = (kr := _kr.get("data") or {}).get("key", "")
+step("M10.7 key created", _kr.get("code") == 0 and _plain.startswith("kb_"))
+# js() 不支持 bearer 头——用 urllib 直连一次
+_reqo = urllib.request.Request(BASE + "/open/ask",
+    data=json.dumps({"kbIds": [kb_id], "question": "XG-200 默认 IP 是多少"}).encode(), method="POST",
+    headers={"Content-Type": "application/json", "Authorization": "Bearer " + _plain})
+_oa = json.loads(urllib.request.urlopen(_reqo, timeout=180).read())
+step("M10.7 open ask answers", _oa.get("code") == 0 and "192.168.8.100" in (_oa.get("data") or {}).get("answer", ""), (_oa.get("data") or {}).get("answer", "")[:40])
+_kid = _kr["data"]["id"]
+js(f"/keys/{_kid}", None, tok, method="DELETE")
+_reqo2 = urllib.request.Request(BASE + "/open/ask",
+    data=json.dumps({"kbIds": [kb_id], "question": "x"}).encode(), method="POST",
+    headers={"Content-Type": "application/json", "Authorization": "Bearer " + _plain})
+try:
+    _dead = json.loads(urllib.request.urlopen(_reqo2, timeout=30).read())
+except urllib.error.HTTPError as e:
+    _dead = json.loads(e.read().decode())
+step("M10.7 revoked key dead", _dead.get("code") == 3002)
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

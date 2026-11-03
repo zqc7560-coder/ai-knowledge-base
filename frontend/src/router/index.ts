@@ -12,6 +12,7 @@ const router = createRouter({
         { path: "kb/:id/docs", name: "docs", component: () => import("../views/DocListView.vue") },
         { path: "chat", name: "chat", component: () => import("../views/ChatView.vue") },
         { path: "debug", name: "debug", component: () => import("../views/DebugView.vue") },
+        { path: "keys", name: "keys", component: () => import("../views/KeysView.vue") },
         { path: "admin", name: "admin", component: () => import("../views/AdminView.vue") },
       ],
     },

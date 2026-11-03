@@ -9,6 +9,7 @@
                    :type="isTab('/admin') ? 'primary' : ''" @click="$router.push('/admin')">管理</el-button>
       </div>
       <div class="right" v-if="store.me">
+        <el-button text @click="$router.push('/keys')">API 密钥</el-button>
         <span class="uname">{{ store.me.username }}</span>
         <el-button size="small" text @click="doLogout">退出</el-button>
       </div>
