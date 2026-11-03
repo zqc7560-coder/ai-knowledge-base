@@ -73,6 +73,10 @@ services:
       KB_ADMIN_USERNAME: ${KB_ADMIN_USERNAME:-}
       KB_ADMIN_PASSWORD: ${KB_ADMIN_PASSWORD:-}
       UPLOAD_DIR: /app/data/uploads
+      # 本机 WSL2 容器直连外网被掐（docs/08 已知坑）：deploy/.env 配
+      # KB_PROXY_OPTS="-Dhttps.proxyHost=host.docker.internal -Dhttps.proxyPort=7890 -Dhttp.nonProxyHosts=..."
+      # 即可让 AI 上游调用走宿主代理；正常联网机器留空零感知。
+      JAVA_OPTS: ${KB_PROXY_OPTS:-}
       MILVUS_URL: http://kb-milvus:19530
     volumes:
       - kb-uploads:/app/data/uploads
