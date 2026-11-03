@@ -2,19 +2,26 @@
   <div class="page">
     <div class="bar">
       <h2>我的知识库</h2>
+      <el-radio-group v-if="groups.length > 1" v-model="grpFilter" size="small" style="margin-right: 12px">
+        <el-radio-button value="__all__">全部</el-radio-button>
+        <el-radio-button v-for="g in groups" :key="g" :value="g || '__none__'">{{ g || '未分组' }}</el-radio-button>
+      </el-radio-group>
       <el-button @click="$router.push('/debug')">检索调试</el-button>
       <el-button type="primary" @click="openCreate">＋ 新建知识库</el-button>
     </div>
 
     <el-empty v-if="!loading && kbs.length === 0" description="还没有知识库，点击右上角创建" />
     <div class="grid" v-loading="loading">
-      <el-card v-for="kb in kbs" :key="kb.id" class="kbc" shadow="hover">
+      <el-card v-for="kb in shown" :key="kb.id" class="kbc" shadow="hover">
         <div class="kbt">
           <span class="nm">{{ kb.name }}</span>
           <el-tag size="small" :type="visType(kb.visibility)">{{ visLabel(kb.visibility) }}</el-tag>
         </div>
         <p class="desc">{{ kb.description || "（暂无描述）" }}</p>
         <div class="meta">切片 {{ kb.chunkSize }}±{{ kb.chunkOverlap }} · TopK {{ kb.topK }} · 阈值 {{ kb.scoreThreshold }}</div>
+        <div class="meta" v-if="kb.tags">
+          <el-tag v-for="tg in String(kb.tags).split(',').filter(Boolean)" :key="tg" size="small" style="margin-right:4px">{{ tg }}</el-tag>
+        </div>
         <div class="ops">
           <el-button size="small" type="primary" plain @click="$router.push(`/kb/${kb.id}/docs`)">文档</el-button>
           <el-button size="small" @click="openSettings(kb)">设置</el-button>
@@ -69,6 +76,12 @@
           <el-switch v-model="f.multiQuery" />
           <span class="hint" style="margin-left:10px">原问题+假设答案双路召回取并集</span>
         </el-form-item>
+        <el-form-item label="分组">
+          <el-input v-model="f.grp" placeholder="可选，如：工作/学习（每用户自由文本）" maxlength="40" />
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-input v-model="f.tags" placeholder="可选，逗号分隔，如：设备,售后" maxlength="200" />
+        </el-form-item>
         <el-form-item>
           <el-button size="small" @click="goDebug">检索调试 →</el-button>
         </el-form-item>
@@ -104,7 +117,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "../api/http";
@@ -113,16 +126,17 @@ const router = useRouter();
 
 interface Kb { id: number; name: string; description?: string; visibility: string;
   chunkSize: number; chunkOverlap: number; topK: number; scoreThreshold: number;
-  parentChild?: number; pcSpan?: number; hyde?: number; multiQuery?: number }
+  parentChild?: number; pcSpan?: number; hyde?: number; multiQuery?: number; grp?: string; tags?: string }
 
 const kbs = ref<Kb[]>([]);
+const grpFilter = ref<string>("__all__");
 const loading = ref(true);
 const dlgShow = ref(false);
 const saving = ref(false);
 const editing = ref<Kb | null>(null);
 const f = reactive({ name: "", description: "", visibility: "PRIVATE",
   chunkSize: 500, chunkOverlap: 100, topK: 5, scoreThreshold: 0.25, parentChild: false, pcSpan: 2,
-  hyde: false, multiQuery: false });
+  hyde: false, multiQuery: false, grp: "", tags: "" });
 
 function goDebug() { dlgShow.value = false; router.push({ name: "debug", query: editing.value ? { kb: editing.value.id } : {} }); }
 const memShow = ref(false);
@@ -131,6 +145,13 @@ const memberList = ref<{ userId: number; permission: string }[]>([]);
 const gUser = ref("");
 const gPerm = ref("ASK");
 
+const shown = computed(() =>
+  grpFilter.value === "__all__" ? kbs.value :
+  kbs.value.filter(k => (k.grp || "") === (grpFilter.value === "__none__" ? "" : grpFilter.value)));
+const groups = computed(() => {
+  const set = new Set<string>(kbs.value.map(k => k.grp || ""));
+  return [...set].sort();
+});
 const visLabel = (v: string) => ({ PRIVATE: "私有", SHARED: "共享", PUBLIC: "公开" }[v] || v);
 const visType = (v: string) => (v === "PUBLIC" ? "success" : v === "SHARED" ? "warning" : "info") as never;
 
@@ -144,7 +165,7 @@ function openCreate() {
   editing.value = null;
   Object.assign(f, { name: "", description: "", visibility: "PRIVATE",
     chunkSize: 500, chunkOverlap: 100, topK: 5, scoreThreshold: 0.25, parentChild: false, pcSpan: 2,
-  hyde: false, multiQuery: false });
+  hyde: false, multiQuery: false, grp: "", tags: "" });
   dlgShow.value = true;
 }
 
@@ -153,7 +174,7 @@ function openSettings(kb: Kb) {
   Object.assign(f, { name: kb.name, description: kb.description || "", visibility: kb.visibility,
     chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap, topK: kb.topK,
     scoreThreshold: Number(kb.scoreThreshold), parentChild: kb.parentChild === 1, pcSpan: kb.pcSpan || 2,
-    hyde: kb.hyde === 1, multiQuery: kb.multiQuery === 1 });
+    hyde: kb.hyde === 1, multiQuery: kb.multiQuery === 1, grp: kb.grp || "", tags: kb.tags || "" });
   dlgShow.value = true;
 }
 

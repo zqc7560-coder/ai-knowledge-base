@@ -268,6 +268,12 @@ if _u1:
 else:
     step("M10.2b edit voids this round", False, "no user msg to edit")
 
+# ---------- M10.4 分组/标签 ----------
+gb = js("/kb", {"name": "M10分组库", "grp": "冒烟组", "tags": "a,b"}, tok)["data"]
+step("M10.4 grp/tags persisted", gb.get("grp") == "冒烟组" and gb.get("tags") == "a,b")
+gb2 = js(f"/kb/{gb['id']}", {"grp": ""}, tok, method="PUT")["data"]
+step("M10.4 blank grp→null", gb2.get("grp") is None and gb2.get("tags") == "a,b")
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

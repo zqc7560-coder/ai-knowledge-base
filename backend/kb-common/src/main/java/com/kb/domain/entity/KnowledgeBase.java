@@ -31,6 +31,10 @@
 
     private String embeddingModel;
 
+    private String grp;
+
+    private String tags;
+
     private Integer parentChild;
 
     private Integer pcSpan;

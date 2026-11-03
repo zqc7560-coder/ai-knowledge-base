@@ -29,7 +29,7 @@ public class KbController {
                             Integer chunkSize, Integer chunkOverlap, Integer topK,
                             java.math.BigDecimal scoreThreshold,
                             Boolean parentChild, Integer pcSpan,
-                            Boolean hyde, Boolean multiQuery) {}
+                            Boolean hyde, Boolean multiQuery, String grp, String tags) {}
 
     @GetMapping
     public Result<List<KnowledgeBase>> list() {
@@ -72,6 +72,6 @@ public class KbController {
     private static KbService.CreateCmd toCmd(CreateReq r) {
         return new KbService.CreateCmd(r.name(), r.description(), r.visibility(),
                 r.chunkSize(), r.chunkOverlap(), r.topK(), r.scoreThreshold(),
-                r.parentChild(), r.pcSpan(), r.hyde(), r.multiQuery());
+                r.parentChild(), r.pcSpan(), r.hyde(), r.multiQuery(), r.grp(), r.tags());
     }
 }

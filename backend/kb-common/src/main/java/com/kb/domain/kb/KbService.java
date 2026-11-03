@@ -35,7 +35,7 @@ public class KbService {
     public record CreateCmd(String name, String description, String visibility,
                             Integer chunkSize, Integer chunkOverlap, Integer topK, BigDecimal scoreThreshold,
                             Boolean parentChild, Integer pcSpan,
-                            Boolean hyde, Boolean multiQuery) {}
+                            Boolean hyde, Boolean multiQuery, String grp, String tags) {}
 
     public KnowledgeBase create(User me, CreateCmd cmd) {
         if (cmd.name() == null || cmd.name().isBlank() || cmd.name().length() > 100)
@@ -56,6 +56,8 @@ public class KbService {
         kb.setPcSpan(clamp(cmd.pcSpan(), 1, 5, 2));
         kb.setHyde(Boolean.TRUE.equals(cmd.hyde()) ? 1 : 0);
         kb.setMultiQuery(Boolean.TRUE.equals(cmd.multiQuery()) ? 1 : 0);
+        kb.setGrp(sanitize(cmd.grp(), 40));
+        kb.setTags(sanitize(cmd.tags(), 200));
         kb.setDeleted(0);
         kbs.insert(kb);
         return kb;
@@ -80,6 +82,8 @@ public class KbService {
         if (cmd.pcSpan() != null) kb.setPcSpan(clamp(cmd.pcSpan(), 1, 5, kb.getPcSpan() == null ? 2 : kb.getPcSpan()));
         if (cmd.hyde() != null) kb.setHyde(cmd.hyde() ? 1 : 0);
         if (cmd.multiQuery() != null) kb.setMultiQuery(cmd.multiQuery() ? 1 : 0);
+        if (cmd.grp() != null) kb.setGrp(sanitize(cmd.grp(), 40));
+        if (cmd.tags() != null) kb.setTags(sanitize(cmd.tags(), 200));
         kbs.updateById(kb);
         return kb;
     }
@@ -124,6 +128,13 @@ public class KbService {
     public List<KbMember> listMembers(User me, Long kbId) {
         access.require(kbId, me, KbAccessService.Perm.READ);
         return members.selectList(new LambdaQueryWrapper<KbMember>().eq(KbMember::getKbId, kbId));
+    }
+
+    /** 自由文本字段消毒（M10.4）：去控制字符、限长、空串存 null（展示层不再区分空/未设置）。 */
+    static String sanitize(String v, int max) {
+        if (v == null) return null;
+        String s = v.replaceAll("\\p{Cntrl}", "").trim();
+        return s.isEmpty() ? null : (s.length() > max ? s.substring(0, max) : s);
     }
 
     private static int clamp(Integer v, int min, int max, int def) {
