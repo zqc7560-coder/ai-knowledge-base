@@ -36,6 +36,18 @@ public class GlobalExceptionHandler {
         return Result.fail(FILE_TOO_LARGE, "文件超过大小限制");
     }
 
+    /**
+     * 路由不存在 = 客户端问题，不是服务端异常。此前它落到 catch-all：ERROR 级堆栈污染日志
+     * （探测扫描一次刷一条"unexpected error"）+ 误报 500/1003，运维误导。
+     * Spring Boot 3 静态资源兜底对未知路径抛 NoResourceFoundException，显式接住回 404。
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public Result<Void> notFound(org.springframework.web.servlet.resource.NoResourceFoundException e) {
+        log.debug("no route: {}", e.getResourcePath());
+        return Result.fail(NOT_FOUND, "资源不存在");
+    }
+
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public Result<Void> other(Exception e) {

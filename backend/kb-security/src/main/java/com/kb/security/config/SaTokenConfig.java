@@ -33,6 +33,11 @@ public class SaTokenConfig implements WebMvcConfigurer {
                         "/api/auth/login",
                         // 找回密码（M11.3）三端点匿名可用；滥用防护全在 PasswordResetService 限流
                         "/api/auth/password/**",
+                        // 运行指标（M12.3）：Prometheus 拉取是机器行为无会话 token，故放行。
+                        // 边界：仅 health 匿名(且 show-details=when_authorized，只回 UP)与 prometheus 文本；
+                        // 部署上 backend 端口只绑 127.0.0.1（compose），公网/nginx 均不透出——
+                        // 公网暴露形态必须在 nginx/防火墙层再挡一层 /actuator（docs/08 已列）。
+                        "/actuator/health/**", "/actuator/info", "/actuator/prometheus",
                         "/api/ping",
                         // 分享只读视图：凭证即授权（随机 token 不可枚举），无登录可访问；
                         // 端点本身只回会话消息，不含库元信息且不可提问（ShareFeedbackController 注释）

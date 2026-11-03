@@ -75,6 +75,19 @@ mail:
   smtp:
     ssl-enable: ${MAIL_SSL:1}
 
+# M12.3 运行指标（Prometheus 生态）
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized   # 匿名只见 UP/DOWN，组件详情不泄连接串线索
+  metrics:
+    tags:
+      application: kb-system
+
 sa-token:
   token-name: Authorization
   timeout: 604800
