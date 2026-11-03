@@ -60,6 +60,9 @@ public class KbAccessService {
 
     public boolean canAccess(KnowledgeBase kb, User user, Perm need) {
         if (kb.getOwnerId().equals(user.getId())) return true;
+        if ("PRIVATE".equals(kb.getVisibility())) return false;   // 私有即绝断，先于成员查询——
+        // 可见性从 SHARED 切回 PRIVATE 不清成员行（保留再切回时的原授权），若把成员判断放在前面，
+        // 残留行会在 PRIVATE 下继续放行=越权读。不变式"PRIVATE 无视任何成员行"在这里一处硬保证。
         if ("PUBLIC".equals(kb.getVisibility()) && need != Perm.EDIT) return true;
         KbMember m = members.selectOne(new LambdaQueryWrapper<KbMember>()
                 .eq(KbMember::getKbId, kb.getId()).eq(KbMember::getUserId, user.getId()));
@@ -73,18 +76,20 @@ public class KbAccessService {
         return kb;
     }
 
-    /** 用户可见的全部库（owner ∪ PUBLIC ∪ 被授权）。 */
+    /** 用户可见的全部库（owner ∪ PUBLIC ∪ 被授权；PRIVATE 的残留成员行不外漏，与 canAccess 同口径）。 */
     public List<KnowledgeBase> visibleTo(User user) {
         List<Long> memberKbIds = members.selectList(new LambdaQueryWrapper<KbMember>()
                 .eq(KbMember::getUserId, user.getId())).stream().map(KbMember::getKbId).toList();
         LambdaQueryWrapper<KnowledgeBase> q = new LambdaQueryWrapper<KnowledgeBase>()
                 .eq(KnowledgeBase::getOwnerId, user.getId());
         q.or(x -> x.eq(KnowledgeBase::getVisibility, "PUBLIC"));
-        if (!memberKbIds.isEmpty()) q.or(y -> y.in(KnowledgeBase::getId, memberKbIds));
+        if (!memberKbIds.isEmpty()) q.or(y -> y.in(KnowledgeBase::getId, memberKbIds)
+                .ne(KnowledgeBase::getVisibility, "PRIVATE"));  // 切回 PRIVATE 不清成员行；列表同判绝不显示
         return kbs.selectList(q.orderByDesc(KnowledgeBase::getUpdatedAt));
     }
 
     public static int rank(String p) {
+        if (p == null) return 0;   // 脏数据/缺列防御：判 0=无权限，绝不 NPE 打断裁决链
         return switch (p) { case "READ" -> 1; case "ASK" -> 2; case "EDIT" -> 3; default -> 0; };
     }
 }
