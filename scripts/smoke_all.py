@@ -175,8 +175,8 @@ ans4, _, _ = ask("XG-200 默认 IP 是多少")
 step("M6 QA after reindex", "192.168.8.100" in ans4, f"ans={ans4[:40]}")
 
 # ---------- M7 任务持久化 / 用量落库 ----------
-tk_hist = js("/admin/tasks", token=atok)          # atok: 管理登录在 F8 段已取
-rows = tk_hist.get("data") or []
+tk_hist = js("/admin/tasks?page=1&size=10", token=atok)   # M13+分页改造：{rows,total}
+rows = (tk_hist.get("data") or {}).get("rows") or []
 step("M7.1 tasks history persisted", tk_hist.get("code") == 0 and len(rows) >= 1, f"rows={len(rows)}")
 mm = js("/admin/usage-month", token=atok)
 mdata = mm.get("data") or {}
@@ -350,8 +350,8 @@ step("M10.7 revoked key dead", _dead.get("code") == 3002)
 
 # ---------- M11 审计日志 ----------
 # 前面 M10.7 已创建过 key（已撤销）→ 审计应能查到 key.create 与 key.revoke
-_ad = js("/admin/audit?limit=200", token=atok)
-_acts = [x["action"] for x in (_ad.get("data") or [])]
+_ad = js("/admin/audit?page=1&size=100", token=atok)
+_acts = [x["action"] for x in ((_ad.get("data") or {}).get("rows") or [])]
 step("M11 audit queryable", _ad.get("code") == 0 and len(_acts) >= 2, f"n={len(_acts)}")
 step("M11 audit has key.create", any(a.startswith("key.create") for a in _acts))
 step("M11 audit has kb.delete path", any(a.startswith("member.") or a.startswith("key.") for a in _acts))
