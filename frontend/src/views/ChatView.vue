@@ -41,7 +41,16 @@
           <div class="msg" :class="m.role" :id="m.id ? 'msg-' + m.id : undefined">
             <div class="bubble">
               <div class="md" v-if="m.role === 'assistant'" v-html="renderMd(m.content)"></div>
-              <div class="plain" v-else>{{ m.content }}</div>
+              <div class="plain" v-if="m.role !== 'assistant' && editMsgId !== m.id">{{ m.content }}</div>
+              <div v-else-if="editMsgId === m.id" class="editbox">
+                <el-input v-model="editText" type="textarea" :rows="3" />
+                <div style="margin-top:6px">
+                  <el-button size="small" @click="editMsgId = 0">取消</el-button>
+                  <el-button size="small" type="primary" @click="saveEdit(m)">保存并重新提问</el-button>
+                </div>
+              </div>
+              <div v-if="m.role === 'user' && editMsgId !== m.id" class="edit-ic" @click="startEdit(m)" title="编辑重问">✎</div>
+              <div class="edit-ic" v-if="false"></div>
               <div class="qfoot" v-if="m.role === 'assistant'">
                 <span v-if="m.elapsedMs" class="ftime">{{ (m.elapsedMs / 1000).toFixed(1) }}s</span>
                 <span v-if="m.model" class="ftime">{{ m.model }}</span>
@@ -152,6 +161,18 @@ async function doSearch() {
   searchHits.value = (await http.get(`/chat/conversations/${current.value}/search`,
     { params: { q: searchKw.value.trim() } })) as any[];
 }
+const editMsgId = ref(0);
+const editText = ref("");
+function startEdit(m: any) { if (!m.id || asking.value) return; editMsgId.value = m.id; editText.value = m.content; }
+async function saveEdit(m: any) {
+  const r = (await http.put(`/chat/messages/${m.id}`, { content: editText.value })) as any;
+  // 服务端删除该条及其后全部消息（本轮作废）；本地同样删掉该条及其后，再由 send 重问产生干净的一对
+  const idx = messages.value.findIndex(x => x.id === m.id);
+  messages.value.splice(idx);
+  editMsgId.value = 0;
+  await send(r.content);
+}
+
 function jumpTo(msgId: number) {
   const el = document.getElementById("msg-" + msgId);
   if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1500); }
@@ -384,6 +405,9 @@ onUnmounted(() => {});
 .hits { position: absolute; top: 34px; left: 14px; right: 14px; max-height: 240px; overflow: auto; background: var(--card, #fff); border: 1px solid var(--border, #eee); border-radius: 8px; z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,.08); }
 .hit { padding: 7px 12px; font-size: 12.5px; cursor: pointer; border-bottom: 1px dashed var(--border, #f0f0f0); }
 .hit:hover { background: var(--muted, #f7f7f7); }
+.edit-ic { float: right; cursor: pointer; opacity: .45; font-size: 12px; margin-left: 6px; }
+.edit-ic:hover { opacity: 1; }
+.editbox { min-width: 260px; }
 .flash { outline: 2px solid var(--accent, #409eff); outline-offset: 2px; border-radius: 8px; }
 .qfoot { margin-top: 6px; display: flex; gap: 8px; align-items: center; }
 .ftime { color: #b0b3b8; font-size: 12px; }

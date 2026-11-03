@@ -156,6 +156,13 @@ public class ChatController {
         return Result.ok(Map.of("question", lastUser));
     }
 
+    /** 编辑重问（M10.2b）：改历史提问并截断其后消息，前端拿返回的新问题文本重走 /ask。 */
+    @PutMapping("/messages/{msgId}")
+    public Result<Object> editQuestion(@PathVariable Long msgId, @RequestBody Map<String, String> body) {
+        var m = convs.editQuestionAndTruncate(auth.currentUser(), msgId, body.get("content"));
+        return Result.ok(Map.of("id", m.getId(), "content", m.getContent()));
+    }
+
     /** 会话内消息搜索（M10.2a）：翻旧对话定位，不跨库。 */
     @GetMapping("/conversations/{convId}/search")
     public Result<Object> searchConv(@PathVariable Long convId, @RequestParam String q) {

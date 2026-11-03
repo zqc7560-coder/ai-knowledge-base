@@ -256,6 +256,18 @@ step("M10.2a conv search hit", sh.get("code") == 0 and len(sh.get("data") or [])
 sh2 = js(f"/chat/conversations/{conv}/search?q=" + _q("绝无此词zz"), token=tok)
 step("M10.2a conv search empty-ok", sh2.get("code") == 0 and len(sh2.get("data") or []) == 0)
 
+# ---------- M10.2b 编辑重问 ----------
+_hist = js(f"/chat/conversations/{conv}/messages", token=tok).get("data") or []
+_u1 = next((x for x in _hist if x["role"] == "user"), None)
+if _u1:
+    er = js(f"/chat/conversations/{conv}/messages", token=tok).get("data") or []
+    # 编辑第一条 user（会级联删其后）→ 会话应清空
+    er2 = js(f"/chat/messages/{_u1['id']}", {"content": "编辑重问冒烟题"}, tok, method="PUT")
+    _hist2 = js(f"/chat/conversations/{conv}/messages", token=tok).get("data") or []
+    step("M10.2b edit voids this round", er2.get("code") == 0 and len(_hist2) == 0, f"n={len(_hist2)}")
+else:
+    step("M10.2b edit voids this round", False, "no user msg to edit")
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

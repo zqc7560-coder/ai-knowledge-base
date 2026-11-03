@@ -100,6 +100,30 @@ public class ConversationService {
         return out;
     }
 
+    /**
+     * 编辑重问（M10.2b）：删除该条 user 问题【及其后全部消息】，并把改写后的问题文本回给前端重问。
+     *
+     * <h3>为什么"连自己一起删"而不是"改内容+删后面"</h3>
+     * 首版实现是改内容保留该行，前端随后再发一次提问 → 服务端历史里出现两条同文 user
+     * （专项实测 n=3 暴露）。正确语义="回退到这一轮并重新提问"：本轮整体作废，由 /ask
+     * 产生干净的 user+assistant 一对。因此这里删 id>=msgId 全部，只回传新文本。
+     * 级联删的必要性同旧版注释：不能留着引用旧问题的答案污染多轮上下文。
+     */
+    public Message editQuestionAndTruncate(User me, Long msgId, String newContent) {
+        if (newContent == null || newContent.isBlank() || newContent.length() > 2000)
+            throw BizException.of(BizCode.PARAM_INVALID, "问题需 1-2000 字符");
+        Message m = msgs.selectById(msgId);
+        if (m == null) throw BizException.of(BizCode.NOT_FOUND, "消息不存在");
+        loadOwned(me, m.getConversationId());
+        if (!"user".equals(m.getRole()))
+            throw BizException.of(BizCode.PARAM_INVALID, "仅可编辑本人提问");
+        msgs.delete(new LambdaQueryWrapper<Message>()
+                .eq(Message::getConversationId, m.getConversationId())
+                .ge(Message::getId, msgId));       // 含自身
+        m.setContent(newContent.trim());           // 仅回传用（库中该行已删）
+        return m;
+    }
+
     public void rename(User me, Long convId, String title) {
         Conversation c = convs.selectById(convId);
         if (c == null || !c.getUserId().equals(me.getId()))
