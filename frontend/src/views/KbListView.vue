@@ -6,8 +6,8 @@
         <el-radio-button value="__all__">全部</el-radio-button>
         <el-radio-button v-for="g in groups" :key="g" :value="g || '__none__'">{{ g || '未分组' }}</el-radio-button>
       </el-radio-group>
-      <!-- 入口显隐=体验层：有任一 ASK 及以上库才显示；安全边界始终由后端 require(ASK) 把守 -->
-      <el-button v-if="kbs.some(k => (k.myRank ?? 0) >= 2)" @click="$router.push('/debug')">检索调试</el-button>
+      <!-- 检索调试=管理员专属：入口只给 ADMIN（后端类级 @SaCheckRole("ADMIN") 强制，路由守卫双保险） -->
+      <el-button v-if="isAdmin" @click="$router.push('/debug')">检索调试</el-button>
       <el-button type="primary" @click="openCreate">＋ 新建知识库</el-button>
     </div>
 
@@ -83,7 +83,7 @@
         <el-form-item label="标签">
           <el-input v-model="f.tags" placeholder="可选，逗号分隔，如：设备,售后" maxlength="200" />
         </el-form-item>
-        <el-form-item v-if="(editing?.myRank ?? 0) >= 2">
+        <el-form-item v-if="isAdmin">
           <el-button size="small" @click="goDebug">检索调试 →</el-button>
         </el-form-item>
       </el-form>
@@ -146,8 +146,12 @@ import { ref, reactive, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "../api/http";
+import { useUserStore } from "../stores/user";
 
 const router = useRouter();
+const store = useUserStore();
+// 检索调试=管理员专属：入口显隐跟角色走（与后端 @SaCheckRole("ADMIN") 同口径）
+const isAdmin = computed(() => store.me?.role === "ADMIN");
 
 interface Kb { id: number; name: string; description?: string; visibility: string;
   chunkSize: number; chunkOverlap: number; topK: number; scoreThreshold: number;

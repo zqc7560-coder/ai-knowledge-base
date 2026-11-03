@@ -27,11 +27,16 @@ const router = createRouter({
   ],
 });
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const store = useUserStore();
   if (to.name === "share" || to.name === "join") return; // 公开路由直通
   if (to.name !== "login" && !store.loggedIn) return { name: "login" };
   if (to.name === "login" && store.loggedIn) return { name: "home" };
+  // 管理员专属页：刷新直达时 me 可能未加载，loadMe 补齐角色再判（后端 @SaCheckRole 仍是最终防线）
+  if ((to.name === "debug" || to.name === "audit") && store.loggedIn) {
+    if (!store.me) await store.loadMe().catch(() => {});
+    if (store.me?.role !== "ADMIN") return { name: "home" };
+  }
 });
 
 export default router;

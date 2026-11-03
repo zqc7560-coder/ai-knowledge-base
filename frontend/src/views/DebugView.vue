@@ -97,9 +97,8 @@ const num = (x: any) => Number(x).toFixed(4);
 const clip = (s: string) => (s && s.length > 90 ? s.slice(0, 90) + "…" : s);
 
 onMounted(async () => {
-  // 只能调试有 ASK+ 权的库（myRank 后端折算；后端 debug 接口仍独立 require(ASK)）
-  const all = (await http.get("/kb")) as any[];
-  kbs.value = all.filter(k => (k.myRank ?? 0) >= 2);
+  // 面板=管理员专属（路由守卫+后端@SaCheckRole双保险）；库列表取管理员可见全量
+  kbs.value = (await http.get("/kb")) as any[];
   const pre = Number(route.query.kb || 0);
   if (pre && kbs.value.some(k => k.id === pre)) kbIds.value = [pre];
   else if (kbs.value.length) kbIds.value = [kbs.value[0].id];
