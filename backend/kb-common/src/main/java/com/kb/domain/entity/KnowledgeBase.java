@@ -10,6 +10,12 @@
     @Data
     @TableName("knowledge_bases")
     public class KnowledgeBase {
+
+    /** 瞬态（不落库）：当前查询者对本库的有效档位（1 READ/2 ASK/3 EDIT，owner 与 PUBLIC 折算后）。
+     *  由 KbService.myVisible 统一计算——前端据此显隐"检索调试"等 ASK 级入口，
+     *  后端 /api/debug 仍独立 require(ASK)：显隐是体验，校验是安全，两层都要。 */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Integer myRank;
     @TableId(type = IdType.AUTO)
     private Long id;
 

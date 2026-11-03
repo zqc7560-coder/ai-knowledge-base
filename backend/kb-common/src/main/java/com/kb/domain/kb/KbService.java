@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
@@ -108,8 +109,28 @@ public class KbService {
     }
 
     public List<KnowledgeBase> myVisible(User me) {
-        return access.visibleTo(me);
+        List<KnowledgeBase> list = access.visibleTo(me);
+        annotateMyRank(list, me);
+        return list;
     }
+
+    /** 给列表逐个折算有效档位（与 canAccess 同口径，前端据此做入口显隐——纯体验层，安全仍以服务端 require 为准）。 */
+    private void annotateMyRank(List<KnowledgeBase> list, User me) {
+        // 成员行一次批量取（防 N+1：百库列表也不额外发百条 SQL）
+        Map<Long, String> memberRank = members.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<KbMember>()
+                        .eq(KbMember::getUserId, me.getId()))
+                .stream().collect(java.util.stream.Collectors.toMap(KbMember::getKbId, KbMember::getPermission, (a, b) -> a));
+        for (KnowledgeBase kb : list) {
+            int rank;
+            if (kb.getOwnerId().equals(me.getId())) rank = 3;
+            else if ("PRIVATE".equals(kb.getVisibility())) rank = 0;
+            else rank = Math.max("PUBLIC".equals(kb.getVisibility()) ? 2 : 0,   // PUBLIC=READ+ASK，EDIT 仍需成员行
+                    KbAccessService.rank(memberRank.get(kb.getId())));
+            kb.setMyRank(rank);
+        }
+    }
+
 
     /** 底层授权（M10.5 复用）：跳过"操作者权限"校验——调用方已各自完成鉴权（接受邀请=持token，审批=EDIT者）。
      *  PRIVATE 库拒绝：私有=仅 owner（canAccess 语义），写了成员行也是死行——
