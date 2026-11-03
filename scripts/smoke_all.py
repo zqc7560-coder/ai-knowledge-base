@@ -46,7 +46,8 @@ step("F1 wrong-pw rejected", js("/auth/login", {"username": f"sm_{SUF}", "passwo
 step("F1 me", (js("/auth/me", token=tok).get("data") or {}).get("username") == f"sm_{SUF}")
 
 # ---------- F2 知识库 + 权限 ----------
-r = js("/kb", {"name": f"库{SUF}", "topK": 5}, tok); kb_id = (r.get("data") or {}).get("id")
+# 主库 SHARED：后续邀请/成员用例需要协作语义（PRIVATE 会被授权拒绝——那是另一条断言）
+r = js("/kb", {"name": f"库{SUF}", "topK": 5, "visibility": "SHARED"}, tok); kb_id = (r.get("data") or {}).get("id")
 step("F2 create kb", bool(kb_id))
 # 第二用户，未授权访问私有库应拒
 js("/auth/register", {"username": f"sb_{SUF}", "email": f"sb_{SUF}@t.local", "password": PW})
@@ -356,6 +357,17 @@ step("M11 audit has key.create", any(a.startswith("key.create") for a in _acts))
 step("M11 audit has kb.delete path", any(a.startswith("member.") or a.startswith("key.") for a in _acts))
 _adn = js("/admin/audit", token=tok)
 step("M11 audit admin-only", _adn.get("code") == 2002)
+
+# ---------- M12.4 补充：PRIVATE 授权拒绝（口径收紧回归防线） ----------
+_pk = js("/kb", {"name": "私有授权拒绝库"}, tok)["data"]
+_pi = js(f"/kb/{_pk['id']}/invites", {"permission": "READ", "maxUses": 1, "days": 7}, tok, method="POST")
+step("M12.4 invite on PRIVATE rejected", _pi.get("code") == 1001 and "SHARED" in str(_pi.get("message")), str(_pi.get("message"))[:40])
+_pg = js(f"/kb/{_pk['id']}/members", {"username": _vu, "permission": "READ"}, tok, method="POST")
+step("M12.4 member grant on PRIVATE rejected", _pg.get("code") == 1001)
+_js2 = js(f"/kb/{_pk['id']}", {"visibility": "SHARED"}, tok, method="PUT")
+_pg2 = js(f"/kb/{_pk['id']}/members", {"username": _vu, "permission": "READ"}, tok, method="POST")
+step("M12.4 after SHARED grant works", _js2.get("code") == 0 and _pg2.get("code") == 0)
+js(f"/kb/{_pk['id']}", None, tok, method="DELETE")
 
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)

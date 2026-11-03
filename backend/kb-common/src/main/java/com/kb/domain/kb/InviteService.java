@@ -55,6 +55,8 @@ public class InviteService {
 
     public KbInvite createInvite(User me, Long kbId, String permission, Integer maxUses, Integer days) {
         access.require(kbId, me, KbAccessService.Perm.EDIT);
+        if ("PRIVATE".equals(access.loadExisting(kbId).getVisibility()))
+            throw BizException.of(BizCode.PARAM_INVALID, "私有知识库无法邀请成员（接受后仍不可见），请先设为 SHARED");
         if (permission != null && !List.of("READ", "ASK", "EDIT").contains(permission))
             throw BizException.of(BizCode.PARAM_INVALID, "邀请档位仅 READ/ASK/EDIT");
         byte[] rnd = new byte[12];
