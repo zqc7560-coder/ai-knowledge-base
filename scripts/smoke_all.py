@@ -274,6 +274,26 @@ step("M10.4 grp/tags persisted", gb.get("grp") == "冒烟组" and gb.get("tags")
 gb2 = js(f"/kb/{gb['id']}", {"grp": ""}, tok, method="PUT")["data"]
 step("M10.4 blank grp→null", gb2.get("grp") is None and gb2.get("tags") == "a,b")
 
+# ---------- M10.5 邀请链接 / 入伙申请 ----------
+iv = js(f"/kb/{kb_id}/invites", {"permission": "ASK", "maxUses": 1, "days": 7}, tok, method="POST")
+ivtk = (iv.get("data") or {}).get("token", "")
+step("M10.5 invite created", iv.get("code") == 0 and len(ivtk) == 24)
+pv = js(f"/public/invite/{ivtk}")   # 匿名可预览
+step("M10.5 public preview", pv.get("code") == 0 and pv["data"]["permission"] == "ASK")
+u9 = "ivsmoke_" + uuid.uuid4().hex[:5]
+t9 = js("/auth/register", {"username": u9, "email": u9 + "@t.local", "password": "iv-pa-12345"})["data"]["token"]
+acc = js("/invites/accept", {"token": ivtk}, t9, method="POST")
+step("M10.5 accept grants access", acc.get("code") == 0 and any(k["id"] == kb_id for k in js("/kb", token=t9)["data"]))
+
+u10 = "aply_" + uuid.uuid4().hex[:5]
+t10 = js("/auth/register", {"username": u10, "email": u10 + "@t.local", "password": "ap-pa-12345"})["data"]["token"]
+ap = js(f"/kb/{kb_id}/requests", None, t10, method="POST")
+step("M10.5 request pending", ap.get("code") == 0 and ap["data"]["state"] == "PENDING")
+pd = js(f"/kb/{kb_id}/requests", token=tok)
+step("M10.5 owner sees request", pd.get("code") == 0 and len(pd["data"]) >= 1)
+dcd = js(f"/requests/{ap['data']['id']}/decide", {"approve": True, "permission": "READ"}, tok, method="POST")
+step("M10.5 approve grants READ", dcd.get("code") == 0)
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

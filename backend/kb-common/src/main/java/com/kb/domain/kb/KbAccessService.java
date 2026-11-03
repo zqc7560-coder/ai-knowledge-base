@@ -84,7 +84,7 @@ public class KbAccessService {
         return kbs.selectList(q.orderByDesc(KnowledgeBase::getUpdatedAt));
     }
 
-    private static int rank(String p) {
+    public static int rank(String p) {
         return switch (p) { case "READ" -> 1; case "ASK" -> 2; case "EDIT" -> 3; default -> 0; };
     }
 }

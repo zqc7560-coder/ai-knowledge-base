@@ -97,6 +97,27 @@ public class KbService {
         return access.visibleTo(me);
     }
 
+    /** 底层授权（M10.5 复用）：跳过"操作者权限"校验——调用方已各自完成鉴权（接受邀请=持token，审批=EDIT者）。 */
+    public void grantDirect(Long kbId, Long userId, String permission) {
+        if (!PERMISSIONS.contains(permission))
+            throw BizException.of(BizCode.PARAM_INVALID, "授权仅支持 READ/ASK/EDIT");
+        KbMember exist = members.selectOne(new LambdaQueryWrapper<KbMember>()
+                .eq(KbMember::getKbId, kbId).eq(KbMember::getUserId, userId));
+        if (exist != null) {
+            // 已是成员：只升不降（邀请/审批不该把既有高权限顶掉）
+            if (KbAccessService.rank(permission) > KbAccessService.rank(exist.getPermission())) {
+                exist.setPermission(permission);
+                members.updateById(exist);
+            }
+        } else {
+            KbMember m = new KbMember();
+            m.setKbId(kbId);
+            m.setUserId(userId);
+            m.setPermission(permission);
+            members.insert(m);
+        }
+    }
+
     public void grantMember(User me, Long kbId, String username, String permission) {
         access.require(kbId, me, KbAccessService.Perm.EDIT);
         if (!PERMISSIONS.contains(permission))

@@ -112,6 +112,30 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <el-divider />
+      <!-- M10.5 邀请链接 -->
+      <div class="grant">
+        <el-select v-model="invPerm" style="width: 100px"><el-option v-for="p in ['READ','ASK','EDIT']" :key="p" :label="p" :value="p" /></el-select>
+        <el-input-number v-model="invUses" :min="1" :max="100" size="small" style="width: 110px" />
+        <el-button size="small" type="primary" @click="genInvite">生成邀请链接</el-button>
+      </div>
+      <div v-for="iv in invites" :key="iv.id" class="invrow">
+        <code>{{ origin }}/join?token=***" }}</code>
+        <span class="hint">{{ iv.permission }} · {{ iv.used }}/{{ iv.maxUses }}<template v-if="iv.revoked"> · 已撤销</template></span>
+        <el-button size="small" text @click="copyInv(iv)">复制</el-button>
+        <el-button v-if="!iv.revoked" size="small" text type="danger" @click="revokeInvite(iv)">撤销</el-button>
+      </div>
+
+      <el-divider content-position="left">入伙申请</el-divider>
+      <div v-for="rq in requests" :key="rq.id" class="invrow">
+        <b>{{ rq.username }}</b>
+        <span class="hint">{{ rq.createdAt }}</span>
+        <el-button size="small" type="success" @click="decide(rq, true)">通过READ</el-button>
+        <el-button size="small" type="primary" @click="decide(rq, true, 'ASK')">通过ASK</el-button>
+        <el-button size="small" type="danger" text @click="decide(rq, false)">拒绝</el-button>
+      </div>
+      <div v-if="!requests.length" class="hint">暂无待审批</div>
     </el-drawer>
   </div>
 </template>
@@ -144,6 +168,30 @@ const memberKb = ref<Kb | null>(null);
 const memberList = ref<{ userId: number; permission: string }[]>([]);
 const gUser = ref("");
 const gPerm = ref("ASK");
+const origin = window.location.origin;
+const invPerm = ref("READ");
+const invUses = ref(1);
+const invites = ref<any[]>([]);
+const requests = ref<any[]>([]);
+async function loadInviteBits() {
+  if (!memberKb.value) return;
+  invites.value = (await http.get(`/kb/${memberKb.value.id}/invites`)) as any[];
+  requests.value = (await http.get(`/kb/${memberKb.value.id}/requests`)) as any[];
+}
+async function genInvite() {
+  if (!memberKb.value) return;
+  await http.post(`/kb/${memberKb.value.id}/invites`, { permission: invPerm.value, maxUses: invUses.value, days: 7 });
+  ElMessage.success("已生成"); loadInviteBits();
+}
+async function revokeInvite(iv: any) { await http.delete(`/invites/${iv.id}`); loadInviteBits(); }
+function copyInv(iv: any) {
+  navigator.clipboard.writeText(`${origin}/join?token=${iv.token}`);
+  ElMessage.success("链接已复制");
+}
+async function decide(rq: any, approve: boolean, perm?: string) {
+  await http.post(`/requests/${rq.id}/decide`, { approve, permission: perm || "READ" });
+  ElMessage.success(approve ? "已通过" : "已拒绝"); loadInviteBits();
+}
 
 const shown = computed(() =>
   grpFilter.value === "__all__" ? kbs.value :
@@ -198,6 +246,7 @@ async function del(kb: Kb) {
 
 async function openMembers(kb: Kb) {
   memberKb.value = kb;
+  loadInviteBits();
   memberList.value = (await http.get(`/kb/${kb.id}/members`)) as never;
   memShow.value = true;
 }
@@ -228,5 +277,7 @@ onMounted(reload);
 .desc { color: #606266; font-size: 13px; min-height: 36px; }
 .meta { color: #909399; font-size: 12px; margin-bottom: 10px; }
 .ops { display: flex; gap: 6px; }
+.invrow { display: flex; gap: 8px; align-items: center; font-size: 12.5px; padding: 4px 0; }
+.invrow code { font-size: 11.5px; word-break: break-all; }
 .grant { display: flex; gap: 8px; }
 </style>

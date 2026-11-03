@@ -18,12 +18,16 @@ const router = createRouter({
     { path: "/login", name: "login", component: () => import("../views/LoginView.vue") },
     // 公开分享页：无需登录（对应 /api/public/** 白名单）
     { path: "/share/:token", name: "share", component: () => import("../views/ShareView.vue") },
+    // 邀请落地页：未登录可见（登录页支持 redirect 回跳）
+    { path: "/join", name: "join", component: () => import("../views/JoinView.vue") },
+    // 邀请落地页：未登录也可访问（登录页带 redirect 回跳）
+    { path: "/join", name: "join", component: () => import("../views/JoinView.vue") },
   ],
 });
 
 router.beforeEach((to) => {
   const store = useUserStore();
-  if (to.name === "share") return; // 公开路由直通
+  if (to.name === "share" || to.name === "join") return; // 公开路由直通
   if (to.name !== "login" && !store.loggedIn) return { name: "login" };
   if (to.name === "login" && store.loggedIn) return { name: "home" };
 });

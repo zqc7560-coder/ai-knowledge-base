@@ -25,7 +25,7 @@
 
 <script setup lang="ts">
 import { reactive, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { http } from "../api/http";
 import { useUserStore } from "../stores/user";
@@ -34,6 +34,7 @@ const tab = ref<"login" | "register">("login");
 const form = reactive({ username: "", email: "", password: "" });
 const loading = ref(false);
 const router = useRouter();
+const route = useRoute();
 const store = useUserStore();
 
 async function submit() {
@@ -49,7 +50,7 @@ async function submit() {
     const data = (await http.post(path, body)) as { token: string };
     store.setToken(data.token);
     await store.loadMe();
-    router.push("/");
+    router.push((route.query.redirect as string) || "/");
   } catch {
     /* 拦截器已提示 */
   } finally {
