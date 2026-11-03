@@ -63,6 +63,13 @@ public class KbService {
         return kb;
     }
 
+    /** 带权限的加载（READ 即可见——update 前取旧值用）。 */
+    public KnowledgeBase loadForUser(User me, Long kbId) {
+        var kb = access.loadExisting(kbId);
+        access.require(kbId, me, KbAccessService.Perm.READ);
+        return kb;
+    }
+
     public KnowledgeBase update(User me, Long kbId, CreateCmd cmd) {
         KnowledgeBase kb = access.require(kbId, me, KbAccessService.Perm.EDIT);
         if (cmd.name() != null && !cmd.name().isBlank()) kb.setName(cmd.name().trim());

@@ -1,6 +1,7 @@
 <template>
   <div class="page" v-if="isAdmin">
     <h2>系统管理</h2>
+    <el-button size="small" @click="$router.push('/audit')">审计日志 →</el-button>
 
     <el-row :gutter="12">
       <el-col :span="6" v-for="c in cards" :key="c.label">

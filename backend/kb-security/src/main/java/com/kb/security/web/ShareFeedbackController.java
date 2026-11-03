@@ -44,13 +44,16 @@ public class ShareFeedbackController {
     private final ShareLinkMapper shares;
     private final ConversationService convs;
     private final AuthService auth;
+    private final com.kb.domain.audit.AuditService audit;
 
     public ShareFeedbackController(MessageMapper msgs, ShareLinkMapper shares,
-                                   ConversationService convs, AuthService auth) {
+                                   ConversationService convs, AuthService auth,
+                                   com.kb.domain.audit.AuditService audit) {
         this.msgs = msgs;
         this.shares = shares;
         this.convs = convs;
         this.auth = auth;
+        this.audit = audit;
     }
 
     /** 赞/踩/取消：body {value: 1|-1|0}。 */
@@ -89,6 +92,7 @@ public class ShareFeedbackController {
         sl.setCreatedBy(me.getId());
         sl.setRevoked(0);
         shares.insert(sl);
+        audit.record(me, "share.create", "conv#" + id, "token=" + sl.getToken());
         return Result.ok(Map.of("token", sl.getToken(), "url", "/share/" + sl.getToken()));
     }
 

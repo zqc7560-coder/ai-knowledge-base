@@ -19,10 +19,13 @@ public class KbController {
 
     private final KbService kb;
     private final AuthService auth;
+    private final com.kb.domain.audit.AuditService audit;
 
-    public KbController(KbService kb, AuthService auth) {
+    public KbController(KbService kb, AuthService auth,
+                           com.kb.domain.audit.AuditService audit) {
         this.kb = kb;
         this.auth = auth;
+        this.audit = audit;
     }
 
     public record CreateReq(@NotBlank String name, String description, String visibility,
@@ -43,24 +46,35 @@ public class KbController {
 
     @PutMapping("/{id}")
     public Result<KnowledgeBase> update(@PathVariable Long id, @RequestBody CreateReq req) {
-        return Result.ok(kb.update(auth.currentUser(), id, toCmd(req)));
+        var me = auth.currentUser();
+        var old = kb.loadForUser(me, id);
+        var out = kb.update(me, id, toCmd(req));
+        if (req.visibility() != null && !req.visibility().equals(old.getVisibility()))
+            audit.record(me, "kb.visibility", "kb#" + id, old.getVisibility() + "→" + req.visibility());
+        return Result.ok(out);
     }
 
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
-        kb.delete(auth.currentUser(), id);
+        var me = auth.currentUser();
+        kb.delete(me, id);
+        audit.record(me, "kb.delete", "kb#" + id, null);
         return Result.ok(null);
     }
 
     @PostMapping("/{id}/members")
     public Result<Void> grant(@PathVariable Long id, @RequestBody Map<String, String> body) {
-        kb.grantMember(auth.currentUser(), id, body.get("username"), body.get("permission"));
+        var me = auth.currentUser();
+        kb.grantMember(me, id, body.get("username"), body.get("permission"));
+        audit.record(me, "member.grant", "kb#" + id, body.get("username") + "→" + body.get("permission"));
         return Result.ok(null);
     }
 
     @DeleteMapping("/{id}/members/{userId}")
     public Result<Void> revoke(@PathVariable Long id, @PathVariable Long userId) {
-        kb.revokeMember(auth.currentUser(), id, userId);
+        var me = auth.currentUser();
+        kb.revokeMember(me, id, userId);
+        audit.record(me, "member.revoke", "kb#" + id, "user#" + userId);
         return Result.ok(null);
     }
 

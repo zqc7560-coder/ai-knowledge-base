@@ -1,6 +1,7 @@
 package com.kb.document.web;
 
 import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.kb.common.api.Result;
 import com.kb.domain.entity.Conversation;
@@ -44,9 +45,15 @@ public class AdminController {
     private final ConversationMapper convs;
     private final JdbcTemplate mysql;
     private final StringRedisTemplate redis;
+    private final com.kb.domain.audit.AuditService audit;
+    private final com.kb.domain.mapper.AuditLogMapper auditLogs;
 
     public AdminController(UserMapper users, KnowledgeBaseMapper kbs, DocumentMapper docs,
-                           ConversationMapper convs, JdbcTemplate mysql, StringRedisTemplate redis) {
+                           ConversationMapper convs, JdbcTemplate mysql, StringRedisTemplate redis,
+                           com.kb.domain.audit.AuditService audit,
+                           com.kb.domain.mapper.AuditLogMapper auditLogs) {
+        this.audit = audit;
+        this.auditLogs = auditLogs;
         this.users = users;
         this.kbs = kbs;
         this.docs = docs;
@@ -94,6 +101,7 @@ public class AdminController {
         u.setId(id);
         u.setStatus(status == 0 ? 0 : 1);
         users.updateById(u);
+        audit.record(currentAdmin(), "user." + (status == 0 ? "disable" : "enable"), "user#" + id, null);
         return Result.ok(null);
     }
 
@@ -105,6 +113,27 @@ public class AdminController {
         u.setId(id);
         u.setRole(role);
         users.updateById(u);
+        audit.record(currentAdmin(), "user.role", "user#" + id, "→" + role);
         return Result.ok(null);
+    }
+
+    /** 当前登录管理员（Sa-Token 会话），审计取操作用户名用。 */
+    private User currentAdmin() {
+        long uid = StpUtil.getLoginIdAsLong();
+        return users.selectById(uid);
+    }
+
+    /** 审计日志查询（M11）：倒序分页，可按动作前缀/用户过滤。ADMIN 专属（类级注解）。 */
+    @GetMapping("/audit")
+    public Result<java.util.List<com.kb.domain.entity.AuditLog>> auditQuery(
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) Long userId,
+            @RequestParam(defaultValue = "100") int limit) {
+        var q = new LambdaQueryWrapper<com.kb.domain.entity.AuditLog>()
+                .orderByDesc(com.kb.domain.entity.AuditLog::getId)
+                .last("limit " + Math.min(Math.max(limit, 1), 500));
+        if (action != null && !action.isBlank()) q.likeRight(com.kb.domain.entity.AuditLog::getAction, action);
+        if (userId != null) q.eq(com.kb.domain.entity.AuditLog::getUserId, userId);
+        return Result.ok(auditLogs.selectList(q));
     }
 }

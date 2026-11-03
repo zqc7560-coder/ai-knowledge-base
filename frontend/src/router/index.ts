@@ -14,6 +14,7 @@ const router = createRouter({
         { path: "debug", name: "debug", component: () => import("../views/DebugView.vue") },
         { path: "keys", name: "keys", component: () => import("../views/KeysView.vue") },
         { path: "admin", name: "admin", component: () => import("../views/AdminView.vue") },
+        { path: "audit", name: "audit", component: () => import("../views/AuditView.vue") },
       ],
     },
     { path: "/login", name: "login", component: () => import("../views/LoginView.vue") },

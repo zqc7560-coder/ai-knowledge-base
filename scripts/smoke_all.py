@@ -347,6 +347,16 @@ except urllib.error.HTTPError as e:
     _dead = json.loads(e.read().decode())
 step("M10.7 revoked key dead", _dead.get("code") == 3002)
 
+# ---------- M11 审计日志 ----------
+# 前面 M10.7 已创建过 key（已撤销）→ 审计应能查到 key.create 与 key.revoke
+_ad = js("/admin/audit?limit=200", token=atok)
+_acts = [x["action"] for x in (_ad.get("data") or [])]
+step("M11 audit queryable", _ad.get("code") == 0 and len(_acts) >= 2, f"n={len(_acts)}")
+step("M11 audit has key.create", any(a.startswith("key.create") for a in _acts))
+step("M11 audit has kb.delete path", any(a.startswith("member.") or a.startswith("key.") for a in _acts))
+_adn = js("/admin/audit", token=tok)
+step("M11 audit admin-only", _adn.get("code") == 2002)
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:
