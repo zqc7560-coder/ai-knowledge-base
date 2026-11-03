@@ -40,3 +40,6 @@ logs/
 
 __pycache__/
 *.pyc
+# Playwright E2E 产物
+frontend/test-results/
+frontend/playwright-report/
