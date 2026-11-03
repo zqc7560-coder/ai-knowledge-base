@@ -154,4 +154,27 @@ class KbAccessServiceTest {
                 ((com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>) cap.getValue()).getParamNameValuePairs();
         assertThat(sql).contains("kb_id").contains("user_id");
     }
+
+    @Test
+    @DisplayName("visibleTo：被授权分支必须带 visibility≠PRIVATE（列表口径与 canAccess 一致，防元数据泄漏）")
+    void visibleToExcludesPrivateFromMemberBranch() {
+        when(members.selectList(any(Wrapper.class))).thenReturn(java.util.List.of(mem(200L, "READ")));
+        when(kbs.selectList(any(Wrapper.class))).thenReturn(java.util.List.of());
+        svc.visibleTo(u(200L));
+        ArgumentCaptor<Wrapper> cap = ArgumentCaptor.forClass(Wrapper.class);
+        verify(kbs).selectList(cap.capture());
+        var w = (com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>) cap.getValue();
+        String sql = w.getSqlSegment();
+        String params = String.valueOf(w.getParamNameValuePairs());
+        assertThat(sql).contains("visibility");           // 成员分支带了 visibility 条件
+        assertThat(params).contains("PRIVATE");           // 值=排除 PRIVATE
+        assertThat(sql).containsAnyOf("<>", "!=");        // ne() 渲染为 <>
+    }
+
+    static {
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+                KnowledgeBase.class);
+    }
 }
