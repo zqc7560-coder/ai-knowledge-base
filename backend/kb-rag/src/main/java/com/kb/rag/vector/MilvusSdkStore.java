@@ -58,7 +58,17 @@ public class MilvusSdkStore implements VectorStore {
 
     private final AiClientFactory ai;
     private final int dim;
-    private final MilvusServiceClient client;
+    private final String host;
+    private final int port;
+    /**
+     * 惰性客户端（M12.1 回归修复）：构造函数【绝不】建连接。
+     * 事故复盘：SDK 客户端构造会同步握 gRPC（连不上则 10s DEADLINE_EXCEEDED 抛异常），
+     * 而 Milvus 是可选组件（start-all.bat 的 run-infra 只起 mysql/redis/pgvector）——
+     * 容器重启后 Milvus 未起时，eager 连接让 Spring 上下文直接崩，"pgvector 默认用户"无辜躺枪。
+     * VectorStoreRouter 注释的设计原则是"未用的那个不碰网络"，REST 版守住了、SDK 版被我破坏，现归还。
+     * 代价：真正用 milvus 时首调用多一次建连（一次性，可忽略）；失败在用法处显式抛出，语义更诚实。
+     */
+    private volatile MilvusServiceClient client;
     private volatile boolean collectionReady = false;
 
     public MilvusSdkStore(AiClientFactory ai,
@@ -68,11 +78,27 @@ public class MilvusSdkStore implements VectorStore {
         this.dim = dim;
         // milvus-url 形如 http://127.0.0.1:19530 → SDK 要 host+port
         var uri = URI_create(milvusUrl);
-        this.client = new MilvusServiceClient(ConnectParam.newBuilder()
-                .withHost(uri.getHost()).withPort(uri.getPort())
-                .withConnectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                .withRpcDeadline(60, java.util.concurrent.TimeUnit.SECONDS)
-                .build());
+        this.host = uri.getHost();
+        this.port = uri.getPort();
+    }
+
+    /** 双检锁建连；Milvus 不可达时在这里（实际使用点）抛错，而非启动期。 */
+    private MilvusServiceClient client() {
+        MilvusServiceClient c = client;
+        if (c == null) {
+            synchronized (this) {
+                c = client;
+                if (c == null) {
+                    c = new MilvusServiceClient(ConnectParam.newBuilder()
+                            .withHost(host).withPort(port)
+                            .withConnectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                            .withRpcDeadline(60, java.util.concurrent.TimeUnit.SECONDS)
+                            .build());
+                    client = c;
+                }
+            }
+        }
+        return c;
     }
 
     private static java.net.URI URI_create(String url) {
@@ -108,7 +134,7 @@ public class MilvusSdkStore implements VectorStore {
                     new InsertParam.Field(F_ID, ids), new InsertParam.Field(F_KB, kbIds),
                     new InsertParam.Field(F_DOC, docIds), new InsertParam.Field(F_CONTENT, contents),
                     new InsertParam.Field(F_VECTOR, vectors));
-            R<MutationResult> r = client.insert(InsertParam.newBuilder()
+            R<MutationResult> r = client().insert(InsertParam.newBuilder()
                     .withCollectionName(COLLECTION).withPartitionName(part)
                     .withFields(fields).build());
             if (r.getException() != null) throw new IllegalStateException("milvus insert: " + r.getException().getMessage());
@@ -140,14 +166,14 @@ public class MilvusSdkStore implements VectorStore {
         ensureCollection();
         for (Long kbId : kbIds) {
             String part = partitionName(kbId);
-            R<Boolean> has = client.hasPartition(io.milvus.param.partition.HasPartitionParam.newBuilder()
+            R<Boolean> has = client().hasPartition(io.milvus.param.partition.HasPartitionParam.newBuilder()
                     .withCollectionName(COLLECTION).withPartitionName(part).build());
             if (!Boolean.TRUE.equals(has.getData())) continue;   // 无分区=本就无数据
             // 实测 Milvus 2.3：loaded 分区不许 drop（"please release it first"）——先 release 再 drop。
             // releasePartitions 是分区级，其余库的分区仍在 loaded，检索不受影响。
-            client.releasePartitions(ReleasePartitionsParam.newBuilder()
+            client().releasePartitions(ReleasePartitionsParam.newBuilder()
                     .withCollectionName(COLLECTION).withPartitionNames(List.of(part)).build());
-            R<?> resp = client.dropPartition(DropPartitionParam.newBuilder()
+            R<?> resp = client().dropPartition(DropPartitionParam.newBuilder()
                     .withCollectionName(COLLECTION).withPartitionName(part).build());
             if (resp.getException() != null) {
                 // 兜底：drop 失败退 filter 删行（行清零；空分区壳残留可接受，重建索引会覆盖）
@@ -165,13 +191,13 @@ public class MilvusSdkStore implements VectorStore {
         List<String> parts = new ArrayList<>();
         for (Long kbId : kbIds) {
             String part = partitionName(kbId);
-            R<Boolean> has = client.hasPartition(io.milvus.param.partition.HasPartitionParam.newBuilder()
+            R<Boolean> has = client().hasPartition(io.milvus.param.partition.HasPartitionParam.newBuilder()
                     .withCollectionName(COLLECTION).withPartitionName(part).build());
             if (Boolean.TRUE.equals(has.getData())) parts.add(part);
         }
         if (parts.isEmpty()) return List.of();
         float[] qv = ai.embed(List.of(query)).get(0);
-        R<SearchResults> resp = client.search(SearchParam.newBuilder()
+        R<SearchResults> resp = client().search(SearchParam.newBuilder()
                 .withCollectionName(COLLECTION)
                 .withPartitionNames(parts)
                 .withMetricType(MetricType.IP)
@@ -202,7 +228,7 @@ public class MilvusSdkStore implements VectorStore {
     public long countByKb(Long kbId) {
         ensureCollection();
         String part = partitionName(kbId);
-        R<io.milvus.grpc.QueryResults> resp = client.query(QueryParam.newBuilder()
+        R<io.milvus.grpc.QueryResults> resp = client().query(QueryParam.newBuilder()
                 .withCollectionName(COLLECTION).withPartitionNames(List.of(part))
                 .withOutFields(List.of(F_ID))
                 .withExpr(F_KB + " == " + kbId)
@@ -217,7 +243,7 @@ public class MilvusSdkStore implements VectorStore {
     private void deleteWhere(String coll, String part, String filter) {
         var b = DeleteParam.newBuilder().withCollectionName(coll).withExpr(filter);
         if (part != null) b.withPartitionName(part);
-        R<MutationResult> r = client.delete(b.build());
+        R<MutationResult> r = client().delete(b.build());
         if (r.getException() != null)
             throw new IllegalStateException("milvus delete: " + r.getException().getMessage());
     }
@@ -228,9 +254,9 @@ public class MilvusSdkStore implements VectorStore {
         if (collectionReady) return;
         synchronized (this) {
             if (collectionReady) return;
-            R<Boolean> has = client.hasCollection(HasCollectionParam.newBuilder().withCollectionName(COLLECTION).build());
+            R<Boolean> has = client().hasCollection(HasCollectionParam.newBuilder().withCollectionName(COLLECTION).build());
             if (Boolean.TRUE.equals(has.getData())) { collectionReady = true; return; }
-            R<?> created = client.createCollection(CreateCollectionParam.newBuilder()
+            R<?> created = client().createCollection(CreateCollectionParam.newBuilder()
                     .withCollectionName(COLLECTION)
                     .withShardsNum(1)
                     .addFieldType(FieldType.newBuilder().withName(F_ID).withDataType(DataType.Int64).withPrimaryKey(true).withAutoID(false).build())
@@ -241,13 +267,13 @@ public class MilvusSdkStore implements VectorStore {
                     .build());
             if (created.getException() != null) throw new IllegalStateException("milvus createCollection: " + created.getException().getMessage());
             // SDK 显式 HNSW/IP（REST 时代只能 AUTOINDEX）——向量已归一化，IP=余弦，与 pgvector 对齐
-            R<?> idx = client.createIndex(CreateIndexParam.newBuilder()
+            R<?> idx = client().createIndex(CreateIndexParam.newBuilder()
                     .withCollectionName(COLLECTION).withFieldName(F_VECTOR)
                     .withIndexType(IndexType.HNSW).withMetricType(MetricType.IP)
                     .withExtraParam("{\"M\":16,\"efConstruction\":200}")
                     .withSyncMode(Boolean.TRUE).build());
             if (idx.getException() != null) throw new IllegalStateException("milvus createIndex: " + idx.getException().getMessage());
-            R<?> load = client.loadCollection(LoadCollectionParam.newBuilder().withCollectionName(COLLECTION).build());
+            R<?> load = client().loadCollection(LoadCollectionParam.newBuilder().withCollectionName(COLLECTION).build());
             if (load.getException() != null) throw new IllegalStateException("milvus load: " + load.getException().getMessage());
             log.info("milvus(SDK) collection {} created (HNSW/IP dim={})", COLLECTION, dim);
             collectionReady = true;
@@ -257,10 +283,10 @@ public class MilvusSdkStore implements VectorStore {
     /** 新库首写前建分区（hasPartition 幂等）。 */
     private void ensurePartition(Long kbId) {
         String part = partitionName(kbId);
-        R<Boolean> has = client.hasPartition(io.milvus.param.partition.HasPartitionParam.newBuilder()
+        R<Boolean> has = client().hasPartition(io.milvus.param.partition.HasPartitionParam.newBuilder()
                 .withCollectionName(COLLECTION).withPartitionName(part).build());
         if (Boolean.TRUE.equals(has.getData())) return;
-        R<?> r = client.createPartition(CreatePartitionParam.newBuilder()
+        R<?> r = client().createPartition(CreatePartitionParam.newBuilder()
                 .withCollectionName(COLLECTION).withPartitionName(part).build());
         if (r.getException() != null) throw new IllegalStateException("milvus createPartition: " + r.getException().getMessage());
     }
@@ -274,5 +300,8 @@ public class MilvusSdkStore implements VectorStore {
     private static String cut(String s) { return s.length() > 8000 ? s.substring(0, 8000) : s; }
 
     @PreDestroy
-    public void close() { try { client.close(); } catch (Exception ignore) {} }
+    public void close() {
+        MilvusServiceClient c = client;
+        if (c != null) { try { c.close(); } catch (Exception ignore) {} }
+    }
 }
