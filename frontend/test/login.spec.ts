@@ -3,10 +3,12 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import ElementPlus from "element-plus";
 
-// mock router：记录 push 目标
+// mock router：记录 push 目标。useRoute 是 M10.5 登录回跳(query.redirect)引入的，
+// 组件 setup 里会调用，mock 必须一并导出，否则 vitest 报 "No useRoute export"。
 const pushSpy = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push: pushSpy }),
+  useRoute: () => ({ query: {}, params: {}, path: "/login", fullPath: "/login" }),
 }));
 
 // mock http：登录成功返回假 token
