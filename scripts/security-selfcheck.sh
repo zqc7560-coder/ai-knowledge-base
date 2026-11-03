@@ -40,9 +40,17 @@ if docker images -q kb-backend:test 2>/dev/null | grep -q .; then
   [ "$found" = "0" ] && pass "5 镜像层无明文" || fail "5 镜像层含明文" "$found files"
 else pass "5 无 kb-backend 镜像(跳过)"; fi
 
-# 6. 唯一 Bearer 持有者审计：Java 源码里 Bearer 只应出现在 AiClientFactory
-FILES=$(grep -rl "Bearer" --include='*.java' backend 2>/dev/null | sed 's#.*/##' | sort -u | tr '\n' ',')
-[ "$FILES" = "AiClientFactory.java," ] && pass "6 Bearer 仅 AiClientFactory" || fail "6 Bearer 散落多文件" "$FILES"
+# 6. 唯一 AI 密钥外发者审计（口径=真实不变式，非字面词频）：
+#    红线是「AI_API_KEY 只能被 AiClientFactory 拼进外发 Authorization 头」。
+#    M10.7 开放API/M11.3 等 legitimately 在注释与【入站头解析】里出现 "Bearer" 字样
+#    （解析用户自带的 key 串，与上游密钥无关）——旧版按 grep -rl "Bearer" 判会误报。
+#    现按三层核：① 持有者唯一（getenv/@Value AI key 仅一处）；② 外发拼接唯一；③ 其余文件出现 Bearer 不得伴随 AI_API_KEY。
+HOLD=$(grep -rl "AI_API_KEY\|ai.api-key" --include='*.java' backend 2>/dev/null | sed 's#.*/##' | sort -u | tr '\n' ',')
+[ "$HOLD" = "AiClientFactory.java," ] && pass "6a AI密钥唯一持有 AiClientFactory" || fail "6a AI密钥持有散落" "$HOLD"
+WIRE=$(grep -rl '"Bearer " *+\|"Bearer "+' --include='*.java' backend 2>/dev/null | sed 's#.*/##' | sort -u | tr '\n' ',')
+[ "$WIRE" = "AiClientFactory.java," ] && pass "6b Bearer外发拼接唯一" || fail "6b Bearer外发散落" "$WIRE"
+LEAK=$(grep -rl "Bearer" --include='*.java' backend 2>/dev/null | xargs grep -l "AI_API_KEY" 2>/dev/null | grep -v AiClientFactory | sed 's#.*/##' | sort -u | tr '\n' ',')
+[ -z "$LEAK" ] && pass "6c 其余Bearer字样文件均不接触AI密钥" || fail "6c Bearer文件混触AI密钥" "$LEAK"
 
 # 7. .env 被 gitignore（backend/.env 与 deploy/.env 均不应被跟踪）
 if git ls-files --error-unmatch backend/.env >/dev/null 2>&1; then fail "7 backend/.env 被跟踪"; else pass "7 .env 未被 git 跟踪"; fi
