@@ -38,12 +38,31 @@
         <template #default="{ row }">
           <el-button v-if="row.status === 'FAILED'" size="small" @click="retry(row.id)">重试</el-button>
           <el-button size="small" plain @click="openChunks(row)">切片</el-button>
+          <el-button size="small" plain @click="openPerms(row)">权限</el-button>
           <el-popconfirm title="删除文档及其向量？" @confirm="del(row.id)">
             <template #reference><el-button size="small" type="danger" text>删除</el-button></template>
           </el-popconfirm>
         </template>
       </el-table-column>
     </el-table>
+    <el-dialog v-model="permShow" title="文档可见性" width="440px">
+      <el-checkbox v-model="restricted" @change="saveRestricted">受限文档（仅白名单成员可见可问）</el-checkbox>
+      <div v-if="restricted" style="margin-top:12px">
+        <div class="grant">
+          <el-select v-model="gUid" placeholder="成员" style="width:150px">
+            <el-option v-for="m in members" :key="m.userId" :label="m.username || ('#'+m.userId)" :value="m.userId" />
+          </el-select>
+          <el-select v-model="gPerm" style="width:90px"><el-option label="READ" value="READ" /><el-option label="ASK" value="ASK" /></el-select>
+          <el-button size="small" type="primary" @click="addPerm">授权</el-button>
+        </div>
+        <el-table :data="perms" size="small" style="margin-top:10px" empty-text="白名单为空">
+          <el-table-column prop="userId" label="用户ID" width="80" />
+          <el-table-column prop="perm" label="权限" width="80" />
+          <el-table-column label="操作"><template #default="{ row }">
+            <el-button size="small" type="danger" text @click="rmPerm(row.userId)">移除</el-button></template></el-table-column>
+        </el-table>
+      </div>
+    </el-dialog>
     <ChunkDrawer v-model="chunkShow" :doc-id="chunkDoc?.id" :doc-name="chunkDoc?.filename" />
   </div>
 </template>
@@ -89,6 +108,35 @@ async function doIngest() {
     ingestUrl.value = "";
     pollBusy();
   } catch { /* toast */ } finally { ingesting.value = false; }
+}
+
+const permShow = ref(false);
+const permDoc = ref<any>(null);
+const restricted = ref(false);
+const perms = ref<any[]>([]);
+const members = ref<any[]>([]);
+const gUid = ref<number>(0);
+const gPerm = ref("READ");
+async function openPerms(row: any) {
+  permDoc.value = row; restricted.value = row.restricted === 1; perms.value = [];
+  try {
+    perms.value = (await http.get(`/documents/${row.id}/perms`)) as any[];
+    members.value = (await http.get(`/kb/${kbId}/members`)) as any[];
+  } catch { /* toast */ }
+  permShow.value = true;
+}
+async function saveRestricted(v: any) {
+  await http.put(`/documents/${permDoc.value.id}/restricted`, { restricted: !!v });
+  ElMessage.success(v ? "已设为受限" : "已恢复全员可见");
+}
+async function addPerm() {
+  if (!gUid.value) return;
+  await http.post(`/documents/${permDoc.value.id}/perms`, { userId: gUid.value, perm: gPerm.value });
+  perms.value = (await http.get(`/documents/${permDoc.value.id}/perms`)) as any[];
+}
+async function rmPerm(uid: number) {
+  await http.delete(`/documents/${permDoc.value.id}/perms/${uid}`);
+  perms.value = perms.value.filter(x => x.userId !== uid);
 }
 
 const chunkShow = ref(false);
