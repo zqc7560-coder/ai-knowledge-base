@@ -156,6 +156,12 @@ public class ChatController {
         return Result.ok(Map.of("question", lastUser));
     }
 
+    /** 会话内消息搜索（M10.2a）：翻旧对话定位，不跨库。 */
+    @GetMapping("/conversations/{convId}/search")
+    public Result<Object> searchConv(@PathVariable Long convId, @RequestParam String q) {
+        return Result.ok(convs.search(auth.currentUser(), convId, q));
+    }
+
     /** 历史引用回放：按 chunkIds 取原文与文档名（权限=对 chunk 所属库至少 ASK）。 */
     @PostMapping("/citations")
     public Result<Object> citations(@RequestBody Map<String, List<Long>> body) {

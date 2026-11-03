@@ -249,6 +249,13 @@ with urllib.request.urlopen(_req2, timeout=180) as _resp:
         elif _line.startswith("data:") and _nm == "delta": _a2 += _line[5:].strip().strip('"')
 step("M9.2 image-only fact answerable", "南门" in _a2, _a2[:50])
 
+# ---------- M10.2a 会话内搜索 ----------
+from urllib.parse import quote as _q
+sh = js(f"/chat/conversations/{conv}/search?q=" + _q("子设备"), token=tok)
+step("M10.2a conv search hit", sh.get("code") == 0 and len(sh.get("data") or []) >= 1, f"n={len(sh.get('data') or [])}")
+sh2 = js(f"/chat/conversations/{conv}/search?q=" + _q("绝无此词zz"), token=tok)
+step("M10.2a conv search empty-ok", sh2.get("code") == 0 and len(sh2.get("data") or []) == 0)
+
 print("\n==== 冒烟汇总 ====")
 ok = sum(1 for _, o in R if o)
 for n, o in R:

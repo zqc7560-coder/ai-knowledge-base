@@ -72,6 +72,34 @@ public class ConversationService {
         return list;
     }
 
+    /**
+     * 会话内消息搜索（M10.2a）：关键词 LIKE 命中，返回 ≤50 条带 ±上下文片段的结果。
+     * 只做本会话内检索（loadOwned 校验归属），不跨库不全文——定位是"翻旧对话"，
+     * 不是知识库检索（那是 RagService 的职责，边界清晰）。
+     */
+    public List<java.util.Map<String, Object>> search(User me, Long convId, String kw) {
+        loadOwned(me, convId);
+        if (kw == null || kw.isBlank() || kw.length() > 100)
+            throw BizException.of(BizCode.PARAM_INVALID, "关键词需 1-100 字符");
+        // LIKE 通配符转义：%/_ 按字面量处理（先转义再交给 mybatis-plus 的 like 参数绑定，无注入面）
+        String esc = kw.replace("\\", "").replace("%", "\\%").replace("_", "\\_");
+        List<Message> list = msgs.selectList(new LambdaQueryWrapper<Message>()
+                .eq(Message::getConversationId, convId)
+                .like(Message::getContent, esc)
+                .orderByAsc(Message::getId).last("limit 50"));
+        List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
+        String plain = kw.replace("\\", "").replace("%", "").replace("_", "");
+        for (Message m : list) {
+            String c = m.getContent();
+            int i = c.indexOf(plain);
+            int lo = Math.max(0, i - 30), hi = Math.min(c.length(), i + plain.length() + 70);
+            out.add(java.util.Map.of("id", m.getId(), "role", m.getRole(),
+                    "snippet", (lo > 0 ? "…" : "") + c.substring(lo, hi) + (hi < c.length() ? "…" : ""),
+                    "createdAt", String.valueOf(m.getCreatedAt())));
+        }
+        return out;
+    }
+
     public void rename(User me, Long convId, String title) {
         Conversation c = convs.selectById(convId);
         if (c == null || !c.getUserId().equals(me.getId()))

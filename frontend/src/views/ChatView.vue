@@ -23,10 +23,22 @@
 
     <!-- 右：消息流 -->
     <section class="main">
+      <div v-if="current" class="searchbar">
+        <el-input v-model="searchKw" size="small" placeholder="在本会话中搜索…" clearable style="width: 220px"
+                  @keyup.enter="doSearch" @clear="searchHits = null">
+          <template #append><el-button size="small" @click="doSearch">搜索</el-button></template>
+        </el-input>
+        <div v-if="searchHits" class="hits">
+          <span v-if="!searchHits.length" class="hint">无命中</span>
+          <div v-for="h in searchHits" :key="h.id" class="hit" @click="jumpTo(h.id)">
+            <b>{{ h.role === 'user' ? '问' : '答' }}</b> {{ h.snippet }}
+          </div>
+        </div>
+      </div>
       <div class="msgs" ref="box">
         <el-empty v-if="!current" description="选择或新建一个对话" />
         <template v-for="(m, i) in messages" :key="i">
-          <div class="msg" :class="m.role">
+          <div class="msg" :class="m.role" :id="m.id ? 'msg-' + m.id : undefined">
             <div class="bubble">
               <div class="md" v-if="m.role === 'assistant'" v-html="renderMd(m.content)"></div>
               <div class="plain" v-else>{{ m.content }}</div>
@@ -133,6 +145,17 @@ const kbs = ref<any[]>([]);
 const current = ref<number | null>(null);
 const messages = ref<Msg[]>([]);
 const q = ref("");
+const searchKw = ref("");
+const searchHits = ref<any[] | null>(null);
+async function doSearch() {
+  if (!current.value || !searchKw.value.trim()) return;
+  searchHits.value = (await http.get(`/chat/conversations/${current.value}/search`,
+    { params: { q: searchKw.value.trim() } })) as any[];
+}
+function jumpTo(msgId: number) {
+  const el = document.getElementById("msg-" + msgId);
+  if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1500); }
+}
 const asking = ref(false);
 const box = ref<HTMLElement>();
 
@@ -357,6 +380,11 @@ onUnmounted(() => {});
 .msg .bubble { max-width: 76%; padding: 10px 14px; border-radius: 10px; background: #f0f2f5; font-size: 14px; line-height: 1.65; }
 .msg.user .bubble { background: #4c7dff; color: #fff; }
 .plain { white-space: pre-wrap; }
+.searchbar { padding: 6px 14px 0; position: relative; }
+.hits { position: absolute; top: 34px; left: 14px; right: 14px; max-height: 240px; overflow: auto; background: var(--card, #fff); border: 1px solid var(--border, #eee); border-radius: 8px; z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+.hit { padding: 7px 12px; font-size: 12.5px; cursor: pointer; border-bottom: 1px dashed var(--border, #f0f0f0); }
+.hit:hover { background: var(--muted, #f7f7f7); }
+.flash { outline: 2px solid var(--accent, #409eff); outline-offset: 2px; border-radius: 8px; }
 .qfoot { margin-top: 6px; display: flex; gap: 8px; align-items: center; }
 .ftime { color: #b0b3b8; font-size: 12px; }
 .fb { cursor: pointer; opacity: .55; font-size: 14px; user-select: none; }
